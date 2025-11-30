@@ -1,3 +1,7 @@
+# Fork Notice
+
+This is a fork of the original [rebos](https://gitlab.com/Oglo12/rebos) by OgloTheNerd. The original project is licensed under GNU GPL v3.
+
 ## File manager
 If you like rebos, you might also be interested in my (@jullanggit) file manager for it: https://github.com/jullanggit/rebos-file-manager
 
