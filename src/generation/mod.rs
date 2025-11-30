@@ -4,7 +4,7 @@ pub mod management;
 
 use colored::Colorize;
 use fspp::*;
-use hashbrown::HashMap;
+use std::collections::HashMap;
 use piglog::prelude::*;
 use piglog::*;
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::io;
 
 use crate::config::config_for;
 use crate::config::{Config, ConfigSide};
-use crate::hook::run_hook_and_return_if_err;
+use crate::hook;
 use crate::library;
 use crate::library::*;
 use crate::lock::*;
@@ -52,126 +52,7 @@ impl Default for Items {
     }
 }
 
-pub mod legacy_1 {
-    use serde::{Deserialize, Serialize};
-
-    use super::Migrate;
-
-    #[derive(PartialEq, Serialize, Deserialize, Debug)]
-    #[serde(deny_unknown_fields, default)]
-    pub struct Generation {
-        pub imports: Vec<String>,
-        pub pkgs: Vec<String>,
-        pub flatpaks: Vec<String>,
-        pub crates: Vec<String>,
-    }
-
-    impl Migrate<super::legacy_2::Generation> for Generation {
-        fn migrate(self) -> super::legacy_2::Generation {
-            let mut gen = super::legacy_2::Generation::default();
-
-            gen.imports = self.imports;
-
-            gen.pkg_managers.insert(
-                "system".to_string(),
-                super::legacy_2::Packages { pkgs: self.pkgs },
-            );
-            gen.pkg_managers.insert(
-                "flatpak".to_string(),
-                super::legacy_2::Packages {
-                    pkgs: self.flatpaks,
-                },
-            );
-            gen.pkg_managers.insert(
-                "cargo".to_string(),
-                super::legacy_2::Packages { pkgs: self.crates },
-            );
-
-            gen
-        }
-    }
-
-    impl Migrate<super::Generation> for Generation {
-        fn migrate(self) -> super::Generation {
-            let mut gen = super::Generation::default();
-
-            gen.imports = self.imports;
-
-            gen.managers
-                .insert("system".to_string(), super::Items { items: self.pkgs });
-            gen.managers.insert(
-                "flatpak".to_string(),
-                super::Items {
-                    items: self.flatpaks,
-                },
-            );
-            gen.managers
-                .insert("cargo".to_string(), super::Items { items: self.crates });
-
-            gen
-        }
-    }
-
-    impl Default for Generation {
-        fn default() -> Self {
-            Self {
-                imports: Vec::new(),
-                pkgs: Vec::new(),
-                flatpaks: Vec::new(),
-                crates: Vec::new(),
-            }
-        }
-    }
-}
-
-pub mod legacy_2 {
-    use hashbrown::HashMap;
-    use serde::{Deserialize, Serialize};
-
-    use super::Migrate;
-
-    #[derive(PartialEq, Serialize, Deserialize, Debug)]
-    #[serde(deny_unknown_fields, default)]
-    pub struct Packages {
-        pub pkgs: Vec<String>,
-    }
-
-    impl Default for Packages {
-        fn default() -> Self {
-            Self { pkgs: Vec::new() }
-        }
-    }
-
-    #[derive(PartialEq, Serialize, Deserialize, Debug)]
-    #[serde(deny_unknown_fields, default)]
-    pub struct Generation {
-        pub imports: Vec<String>,
-        pub pkg_managers: HashMap<String, Packages>,
-    }
-
-    impl Migrate<super::Generation> for Generation {
-        fn migrate(self) -> super::Generation {
-            let mut gen = super::Generation::default();
-
-            gen.imports = self.imports;
-
-            for (key, value) in self.pkg_managers.into_iter() {
-                gen.managers.insert(key, super::Items { items: value.pkgs });
-            }
-
-            gen
-        }
-    }
-
-    impl Default for Generation {
-        fn default() -> Generation {
-            Generation {
-                imports: Vec::new(),
-                pkg_managers: HashMap::new(),
-            }
-        }
-    }
-}
+pub mod legacy;
 
 #[derive(PartialEq, Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields, default)]
@@ -219,7 +100,7 @@ pub trait GenerationUtils {
 
 // Return generation structure for...
 pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
-    let mut generation = match read_to_gen(&config_for(Config::Generation, side)) {
+    let mut generation = match read_to_gen(&config_for(Config::Generation, side)?) {
         Ok(o) => o,
         Err(e) => return Err(e),
     };
@@ -323,8 +204,8 @@ fn read_to_gen(path: &Path) -> Result<Generation, io::Error> {
 
             let mut gen: Option<Result<Generation, toml::de::Error>> = None;
 
-            deserialize_legacy!(gen, &gen_string, legacy_1::Generation, 1);
-            deserialize_legacy!(gen, &gen_string, legacy_2::Generation, 2);
+            deserialize_legacy!(gen, &gen_string, legacy::legacy_1::Generation, 1);
+            deserialize_legacy!(gen, &gen_string, legacy::legacy_2::Generation, 2);
 
             match gen {
                 Some(s) => {
@@ -533,7 +414,7 @@ fn get_order(gen: &Generation) -> Result<Vec<String>, io::Error> {
 pub fn build() -> Result<(), io::Error> {
     abort_if_locked();
 
-    run_hook_and_return_if_err!("pre_build");
+    hook::run("pre_build")?;
 
     let current_num = match get_current() {
         Ok(o) => o,
@@ -659,7 +540,7 @@ pub fn build() -> Result<(), io::Error> {
         Err(e) => return Err(e),
     };
 
-    run_hook_and_return_if_err!("post_build");
+    hook::run("post_build")?;
 
     Ok(())
 }
@@ -1009,16 +890,58 @@ pub fn is_built(generation: usize) -> Result<bool, io::Error> {
 
 // List all generations. (NORMAL)
 pub fn list() -> Result<Vec<(String, String, bool, bool)>, io::Error> {
-    return list_core(true);
+    let gen_listed = match directory::list_items(&places::gens()) {
+        Ok(o) => o,
+        Err(e) => {
+            error!(
+                "Failed to list the generations directory! ({})",
+                places::gens().to_string()
+            );
+            return Err(e);
+        }
+    };
+
+    let mut generations: Vec<Path> = Vec::new();
+
+    for i in gen_listed.into_iter() {
+        match i.path_type() {
+            PathType::File => {}
+            PathType::Directory => generations.push(i),
+            PathType::Invalid => {
+                error!("Found invalid path! (Listing generations.)");
+                return Err(custom_error("Found invalid path."));
+            }
+        };
+    }
+
+    let mut gens_with_info: Vec<(String, String, bool, bool)> = Vec::new();
+    
+    let current_number = match get_current() {
+        Ok(o) => o,
+        Err(e) => return Err(e),
+    };
+    let built_number = match get_built_no_output() {
+        Ok(o) => o,
+        Err(_e) => 0,
+    };
+
+    for i in generations.iter() {
+        let generation_name = i.basename();
+
+        let commit_msg = file::read(&i.add_str("commit"))
+            .unwrap_or(String::from("<< COMMIT MESSAGE MISSING >>"));
+
+        let is_current = generation_name == current_number.to_string();
+        let is_built = generation_name == built_number.to_string();
+
+        gens_with_info.push((generation_name, commit_msg, is_current, is_built));
+    }
+
+    return Ok(gens_with_info);
 }
 
 // List all generations. (ISOLATED MODE | For avoiding errors with called un-needed functions!)
 pub fn list_with_no_calls() -> Result<Vec<(String, String, bool, bool)>, io::Error> {
-    return list_core(false);
-}
-
-// List all generations. (CORE)
-fn list_core(calls: bool) -> Result<Vec<(String, String, bool, bool)>, io::Error> {
     let gen_listed = match directory::list_items(&places::gens()) {
         Ok(o) => o,
         Err(e) => {
@@ -1047,42 +970,11 @@ fn list_core(calls: bool) -> Result<Vec<(String, String, bool, bool)>, io::Error
 
     for i in generations.iter() {
         let generation_name = i.basename();
+
         let commit_msg = file::read(&i.add_str("commit"))
             .unwrap_or(String::from("<< COMMIT MESSAGE MISSING >>"));
 
-        let current_number: usize;
-        let built_number: usize;
-
-        if calls == true {
-            current_number = match get_current() {
-                Ok(o) => o,
-                Err(e) => return Err(e),
-            };
-            built_number = match get_built_no_output() {
-                Ok(o) => o,
-                Err(_e) => 0,
-            };
-        } else {
-            current_number = 0;
-            built_number = 0;
-        }
-
-        let is_current: bool;
-        let is_built: bool;
-
-        if generation_name == current_number.to_string() {
-            is_current = true;
-        } else {
-            is_current = false;
-        }
-
-        if generation_name == built_number.to_string() {
-            is_built = true;
-        } else {
-            is_built = false;
-        }
-
-        gens_with_info.push((generation_name, commit_msg, is_current, is_built));
+        gens_with_info.push((generation_name, commit_msg, false, false));
     }
 
     return Ok(gens_with_info);

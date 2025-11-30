@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 
 use colored::Colorize;
-use hashbrown::HashMap;
+use std::collections::HashMap;
 use piglog::prelude::*;
 use std::io;
 use std::process::Command;
 use users::get_current_username;
 
-use crate::convert::*;
+
 use crate::generation::Generation;
 
 #[derive(PartialEq)]
@@ -21,10 +21,7 @@ pub struct History {
     pub line: String,
 }
 
-pub fn abort() {
-    // Try not to use this function!
-    std::process::exit(1);
-}
+
 
 pub fn run_command(command: &str) -> bool {
     match Command::new("bash").args(["-c", command]).status() {
@@ -46,42 +43,10 @@ pub fn run_command_with_output(command: &str) -> Option<String> {
     }
 }
 
-pub fn cut(full: &str, fword: u32, dword: char) -> String {
-    let vecced = str_to_string_vec(full, dword.to_string().as_str());
 
-    let fspot = fword - 1;
-
-    if vecced.len() < fword as usize {
-        return String::from("");
-    }
-
-    vecced[fspot as usize].to_string()
-}
-
-pub fn sed(full: &str, replace: &str, with: &str) -> String {
-    let mut phrase_vec: Vec<String> = Vec::new();
-
-    for i in full.split(replace) {
-        phrase_vec.push(i.to_string());
-    }
-
-    let mut phrase = String::new();
-
-    for i in 0..phrase_vec.len() {
-        phrase.push_str(phrase_vec[i].as_str());
-
-        if i < phrase_vec.len() - 1 {
-            phrase.push_str(with);
-        }
-    }
-
-    phrase
-}
 
 pub fn name_from_path(path: &str) -> String {
-    let converted = str_to_string_vec(path, "/");
-
-    converted[converted.len() - 1].to_string()
+    path.split('/').last().unwrap_or("").to_string()
 }
 
 pub fn custom_error(error: &str) -> io::Error {

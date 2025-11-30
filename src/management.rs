@@ -9,7 +9,7 @@ use std::io;
 
 use crate::config::ConfigSide;
 use crate::generation::{gen, Items};
-use crate::library::{self, *};
+use crate::library::*;
 use crate::obj_print_boilerplate::macros::print_entry;
 use crate::{bool_question, places};
 
@@ -50,7 +50,7 @@ impl Manager {
     pub fn add(&self, items: &[String]) -> Result<(), io::Error> {
         let many = self.config.many_args;
 
-        crate::hook::run_hook_and_return_if_err!(format!("pre_{}_add", self.hook_name));
+        crate::hook::run(&format!("pre_{}_add", self.hook_name))?;
 
         if many {
             self.add_raw(&self.join_args(items))?;
@@ -60,7 +60,7 @@ impl Manager {
             }
         }
 
-        crate::hook::run_hook_and_return_if_err!(format!("post_{}_add", self.hook_name));
+        crate::hook::run(&format!("post_{}_add", self.hook_name))?;
 
         Ok(())
     }
@@ -68,7 +68,7 @@ impl Manager {
     pub fn remove(&self, items: &[String]) -> Result<(), io::Error> {
         let many = self.config.many_args;
 
-        crate::hook::run_hook_and_return_if_err!(format!("pre_{}_remove", self.hook_name));
+        crate::hook::run(&format!("pre_{}_remove", self.hook_name))?;
 
         if many {
             self.remove_raw(&self.join_args(items))?;
@@ -78,7 +78,7 @@ impl Manager {
             }
         }
 
-        crate::hook::run_hook_and_return_if_err!(format!("post_{}_remove", self.hook_name));
+        crate::hook::run(&format!("post_{}_remove", self.hook_name))?;
 
         Ok(())
     }
@@ -88,7 +88,7 @@ impl Manager {
             return Ok(());
         }
 
-        match run_command(sed(self.add.as_str(), "#:?", items).as_str()) {
+        match run_command(self.add.as_str().replace("#:?", items).as_str()) {
             true => info!("Successfully added {}!", self.plural_name),
             false => {
                 error!("Failed to add {}!", self.plural_name);
@@ -107,7 +107,7 @@ impl Manager {
             return Ok(());
         }
 
-        match run_command(sed(self.remove.as_str(), "#:?", items).as_str()) {
+        match run_command(self.remove.as_str().replace("#:?", items).as_str()) {
             true => info!("Successfully removed {}!", self.plural_name),
             false => {
                 error!("Failed to remove {}!", self.plural_name);
@@ -122,7 +122,7 @@ impl Manager {
     }
 
     pub fn sync(&self) -> Result<(), io::Error> {
-        crate::hook::run_hook_and_return_if_err!(format!("pre_{}_sync", self.hook_name));
+        crate::hook::run(&format!("pre_{}_sync", self.hook_name))?;
 
         if let Some(ref s) = self.sync {
             match run_command(s) {
@@ -135,13 +135,13 @@ impl Manager {
             };
         }
 
-        crate::hook::run_hook_and_return_if_err!(format!("post_{}_sync", self.hook_name));
+        crate::hook::run(&format!("post_{}_sync", self.hook_name))?;
 
         Ok(())
     }
 
     pub fn upgrade(&self) -> Result<(), io::Error> {
-        crate::hook::run_hook_and_return_if_err!(format!("pre_{}_upgrade", self.hook_name));
+        crate::hook::run(&format!("pre_{}_upgrade", self.hook_name))?;
 
         if let Some(ref s) = self.upgrade {
             match run_command(s) {
@@ -156,7 +156,7 @@ impl Manager {
             };
         }
 
-        crate::hook::run_hook_and_return_if_err!(format!("post_{}_upgrade", self.hook_name));
+        crate::hook::run(&format!("post_{}_upgrade", self.hook_name))?;
 
         Ok(())
     }

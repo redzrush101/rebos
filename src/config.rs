@@ -7,7 +7,7 @@ use std::io;
 
 use crate::config;
 use crate::generation;
-use crate::library::*;
+
 use crate::places;
 use crate::system;
 
@@ -144,7 +144,7 @@ pub fn init_user_config() -> Result<(), io::Error> {
     let files = vec![
         (
             DEFAULT_USER_GEN,
-            config::config_for(Config::Generation, ConfigSide::User),
+            config::config_for(Config::Generation, ConfigSide::User)?,
         ),
         (
             DEFAULT_USER_GEN,
@@ -183,20 +183,19 @@ pub fn init_user_config() -> Result<(), io::Error> {
 }
 
 // Return path for a config file.
-pub fn config_for(config: Config, side: ConfigSide) -> Path {
-    return match config {
+pub fn config_for(config: Config, side: ConfigSide) -> Result<Path, std::io::Error> {
+    match config {
         Config::Generation => match side {
-            ConfigSide::User => places::base_user().add_str("gen.toml"),
+            ConfigSide::User => Ok(places::base_user().add_str("gen.toml")),
             ConfigSide::System => match generation::current_gen() {
-                Ok(o) => o,
-                Err(_e) => {
+                Ok(o) => Ok(o),
+                Err(e) => {
                     error!("Failed to get config path for system generation!");
-                    abort();
-                    return Path::new("This should never get returned.");
+                    Err(e)
                 }
             },
         },
-    };
+    }
 }
 
 pub trait ConfigInfoToMessage {
