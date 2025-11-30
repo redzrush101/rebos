@@ -2,6 +2,7 @@ mod cli; // For argument parsing and command structuring.
 mod config; // Configuration stuff.
 mod dispatch; // Command dispatch and handling.
 mod generation; // The generations system.
+mod git; // Git operations.
 mod hook; // Hook stuff.
 mod library; // Full of functions.
 mod lock; // Locking file functionality.

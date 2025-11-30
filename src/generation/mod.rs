@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-pub mod management;
-
 use colored::Colorize;
 use fspp::*;
 use std::collections::HashMap;
@@ -12,8 +10,8 @@ use std::io;
 
 use crate::config::config_for;
 use crate::config::{Config, ConfigSide};
+use crate::git;
 use crate::hook;
-use crate::library;
 use crate::library::*;
 use crate::lock::*;
 use crate::management::load_manager;
@@ -189,6 +187,10 @@ fn read_to_gen(path: &Path) -> Result<Generation, io::Error> {
     let gen_string = match file::read(path) {
         Ok(o) => o,
         Err(e) => {
+            // Don't error if file doesn't exist, just return default generation
+            if e.kind() == io::ErrorKind::NotFound {
+                return Ok(Generation::default());
+            }
             error!("Failed to read generation TOML file!");
             return Err(e);
         }
@@ -226,71 +228,55 @@ fn read_to_gen(path: &Path) -> Result<Generation, io::Error> {
     })
 }
 
-// Does the generation specified exist?
-pub fn gen_exists(gen_id: usize) -> bool {
-    let path = places::gens()
-        .add_str(&gen_id.to_string())
-        .add_str("gen.toml");
-
-    path.exists()
-}
-
-// Get generation for the id
-pub fn get_gen_from_usize(gen_id: usize) -> Result<Generation, io::Error> {
-    let generation = read_to_gen(
-        &places::gens()
-            .add_str(&gen_id.to_string())
-            .add_str("gen.toml"),
-    )?;
-
-    return Ok(generation);
-}
-
-// Get generation commit for the id
-pub fn get_gen_commit_from_usize(gen_id: usize) -> Result<String, io::Error> {
-    let gen_commit = file::read(
-        &places::gens()
-            .add_str(&gen_id.to_string())
-            .add_str("commit"),
-    )?;
-
-    return Ok(gen_commit);
-}
-
-// Get latest generation number.
-pub fn latest_number() -> Result<usize, io::Error> {
-    let generation_numbers = match list_gen_nums() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    if generation_numbers.len() < 1 {
-        return Ok(0);
-    }
-
-    let latest_num = match generation_numbers.into_iter().max() {
-        Some(s) => s,
-        None => {
-            error!("Failed to get max number in generation numbers list!");
-            return Err(custom_error(
-                "Failed to get max number in generation number list!",
-            ));
+// Get generation from Git commit hash
+pub fn get_gen_from_hash(hash: &str) -> Result<Generation, io::Error> {
+    let repo = git::repo();
+    
+    // Try to get gen.toml from the commit
+    match repo.get_file_content_at_hash(hash, "gen.toml") {
+        Ok(content) => {
+            match toml::from_str(&content) {
+                Ok(gen) => Ok(gen),
+                Err(e) => {
+                    error!("Failed to deserialize generation from commit {}", hash);
+                    Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+                }
+            }
         }
-    };
-
-    return Ok(latest_num);
+        Err(e) => {
+            // If gen.toml doesn't exist in this commit, return default generation
+            if e.kind() == io::ErrorKind::NotFound {
+                return Ok(Generation::default());
+            }
+            Err(e)
+        }
+    }
 }
 
-// Create a new system generation based on the user generation.
-pub fn commit(msg: &str) -> Result<(), io::Error> {
+// Get current generation hash
+pub fn get_current_hash() -> Result<String, io::Error> {
+    let repo = git::repo();
+    repo.get_current_hash()
+}
+
+// Get built generation hash
+pub fn get_built_hash() -> Result<String, io::Error> {
+    let built_path = places::gens().add_str("built");
+    
+    match file::read(&built_path) {
+        Ok(content) => Ok(content.trim().to_string()),
+        Err(e) => {
+            if e.kind() == io::ErrorKind::NotFound {
+                return Err(io::Error::new(io::ErrorKind::NotFound, "No built generation found"));
+            }
+            Err(e)
+        }
+    }
+}
+
+// Create a new generation commit
+pub fn commit(msg: &str) -> Result<String, io::Error> {
     abort_if_locked();
-
-    let generation_number = match latest_number() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    } + 1;
-
-    let gen_dir = places::gens().add_str(&generation_number.to_string());
 
     let user_gen = match gen(ConfigSide::User) {
         Ok(o) => o,
@@ -305,44 +291,29 @@ pub fn commit(msg: &str) -> Result<(), io::Error> {
         }
     };
 
-    match directory::create(&gen_dir) {
-        Ok(_) => info!("Created generation directory."),
+    // Write generation to file
+    let gen_path = places::gens().add_str("gen.toml");
+    match file::write(&user_gen_string, &gen_path) {
+        Ok(_) => info!("Wrote generation file"),
         Err(e) => {
-            error!("Failed to create generation directory!");
+            error!("Failed to write generation file!");
             return Err(e);
         }
     };
 
-    let files = vec![
-        (msg, gen_dir.add_str("commit")),
-        (user_gen_string.as_str(), gen_dir.add_str("gen.toml")),
-    ];
-
-    for i in files.iter() {
-        match file::write(i.0, &i.1) {
-            Ok(_o) => info!("Created file: {}", i.1.basename()),
-            Err(e) => {
-                error!("Failed to create file: {}", i.1.basename());
-
-                match fs_action::delete(&gen_dir) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!("Failed to delete generation directory!");
-                        return Err(e);
-                    }
-                };
-
-                return Err(e);
-            }
-        };
+    // Commit to Git
+    let repo = git::repo();
+    let hash = repo.commit(msg)?;
+    
+    if hash.is_empty() {
+        warning!("No changes to commit");
+        return Ok(String::new());
     }
 
-    match set_current(generation_number, true) {
-        Ok(_o) => {}
-        Err(e) => return Err(e),
-    };
+    // Set as current
+    set_current_hash(&hash, true)?;
 
-    return Ok(());
+    Ok(hash)
 }
 
 fn get_order(gen: &Generation) -> Result<Vec<String>, io::Error> {
@@ -410,100 +381,96 @@ fn get_order(gen: &Generation) -> Result<Vec<String>, io::Error> {
     Ok(return_order)
 }
 
-// Build the 'current' system generation.
+// Apply differences between two generations
+fn apply_diffs(built_gen: &Generation, curr_gen: &Generation) -> Result<(), io::Error> {
+    let curr_order: Vec<String> = get_order(curr_gen)?;
+
+    // Remove old items, add new items
+    for i in curr_order.iter() {
+        let man = load_manager(i)?;
+
+        let curr_items = curr_gen.managers.get(i).unwrap();
+
+        match built_gen.managers.get(i) {
+            Some(built_items) => {
+                let diffs = history(&built_items.items, &curr_items.items);
+
+                let mut to_install: Vec<String> = Vec::new();
+                let mut to_remove: Vec<String> = Vec::new();
+
+                for j in diffs.iter() {
+                    match j.mode {
+                        HistoryMode::Add => to_install.push(j.line.to_string()),
+                        HistoryMode::Remove => to_remove.push(j.line.to_string()),
+                    };
+                }
+
+                man.remove(&to_remove)?;
+                man.add(&to_install)?;
+            }
+            None => {
+                man.add(&curr_items.items)?;
+            }
+        }
+    }
+
+    let built_order: Vec<String> = get_order(built_gen)?;
+
+    // Remove items from managers that were removed from the generation
+    for i in built_order.iter() {
+        let built_items = built_gen.managers.get(i).unwrap();
+
+        match curr_gen.managers.get(i) {
+            Some(_) => (),
+            None => {
+                let man = load_manager(i)?;
+                man.remove(&built_items.items)?;
+            }
+        };
+    }
+
+    Ok(())
+}
+
+// Apply full generation (for first-time builds)
+fn apply_full(curr_gen: &Generation) -> Result<(), io::Error> {
+    let curr_order = get_order(curr_gen)?;
+
+    for i in curr_order.iter() {
+        let curr_items = curr_gen.managers.get(i).unwrap();
+
+        let man = load_manager(i)?;
+
+        man.add(&curr_items.items)?;
+    }
+
+    Ok(())
+}
+
+// Build the current system generation
 pub fn build() -> Result<(), io::Error> {
     abort_if_locked();
 
     hook::run("pre_build")?;
-
-    let current_num = match get_current() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
 
     let curr_gen = match gen(ConfigSide::System) {
         Ok(o) => o,
         Err(e) => return Err(e),
     };
 
-    match file::read(&places::gens().add_str("built")) {
-        Ok(o) => {
-            let built_gen = read_to_gen(&places::gens().add_str(o.trim()).add_str("gen.toml"))?;
+    let current_hash = match get_current_hash() {
+        Ok(hash) => hash,
+        Err(_) => {
+            error!("No current generation found!");
+            return Err(custom_error("No current generation found!"));
+        }
+    };
 
-            let mut summary_entries: HashMap<String, Vec<History>> = HashMap::new();
+    match get_built_hash() {
+        Ok(built_hash) => {
+            let built_gen = get_gen_from_hash(&built_hash)?;
 
-            let curr_order: Vec<String> = get_order(&curr_gen)?;
-
-            // Remove old items, add new items,
-            for i in curr_order.iter() {
-                let man = load_manager(i)?;
-
-                let curr_items = curr_gen.managers.get(i).unwrap();
-
-                match built_gen.managers.get(i) {
-                    Some(built_items) => {
-                        let diffs = history(&built_items.items, &curr_items.items);
-
-                        let mut to_install: Vec<String> = Vec::new();
-                        let mut to_remove: Vec<String> = Vec::new();
-
-                        for j in diffs.iter() {
-                            match j.mode {
-                                HistoryMode::Add => to_install.push(j.line.to_string()),
-                                HistoryMode::Remove => to_remove.push(j.line.to_string()),
-                            };
-                        }
-
-                        man.remove(&to_remove)?;
-                        man.add(&to_install)?;
-
-                        summary_entries.insert(i.to_string(), diffs);
-                    }
-                    None => {
-                        man.add(&curr_items.items)?;
-
-                        summary_entries.insert(
-                            i.to_string(),
-                            curr_items
-                                .items
-                                .iter()
-                                .map(|x| History {
-                                    mode: HistoryMode::Add,
-                                    line: x.to_string(),
-                                })
-                                .collect(),
-                        );
-                    }
-                }
-            }
-
-            let built_order: Vec<String> = get_order(&built_gen)?;
-
-            // Remove items from managers that were removed from the generation.
-            for i in built_order.iter() {
-                let built_items = built_gen.managers.get(i).unwrap();
-
-                match curr_gen.managers.get(i) {
-                    Some(_) => (),
-                    None => {
-                        let man = load_manager(i)?;
-
-                        man.remove(&built_items.items)?;
-
-                        summary_entries.insert(
-                            i.to_string(),
-                            built_items
-                                .items
-                                .iter()
-                                .map(|x| History {
-                                    mode: HistoryMode::Remove,
-                                    line: x.to_string(),
-                                })
-                                .collect(),
-                        );
-                    }
-                };
-            }
+            apply_diffs(&built_gen, &curr_gen)?;
 
             println!("");
             println!("");
@@ -515,496 +482,155 @@ pub fn build() -> Result<(), io::Error> {
 
             println!("");
 
-            library::print_history_gen(&summary_entries);
+            // TODO: Implement summary printing for Git-based system
+            note!("Summary printing not yet implemented for Git-based system");
 
             println!("");
             println!("");
         }
         Err(_) => {
-            let curr_order = get_order(&curr_gen)?;
-
-            for i in curr_order.iter() {
-                let curr_items = curr_gen.managers.get(i).unwrap();
-
-                let man = load_manager(i)?;
-
-                man.add(&curr_items.items)?;
-            }
-
+            apply_full(&curr_gen)?;
             note!("There is no summary. (First time building.)");
         }
     };
 
-    match set_built(current_num, true) {
-        Ok(_o) => {}
-        Err(e) => return Err(e),
-    };
+    // Set built hash
+    set_built_hash(&current_hash, true)?;
 
     hook::run("post_build")?;
 
     Ok(())
 }
 
-// Set the 'current' generation to another older generation.
+// Rollback to a previous commit
 pub fn rollback(by: isize, verbose: bool) -> Result<(), io::Error> {
     abort_if_locked();
 
-    let current_num = match get_current() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    let new_current = (current_num as isize) - by;
-
-    match set_current(new_current as usize, verbose) {
-        Ok(_o) => {}
-        Err(e) => return Err(e),
-    };
-
-    return Ok(());
+    let repo = git::repo();
+    let _current_hash = get_current_hash()?;
+    
+    let log = repo.log(None)?;
+    
+    if by >= log.len() as isize {
+        error!("Cannot rollback that far!");
+        return Err(custom_error("Rollback out of range!"));
+    }
+    
+    let target_index = by as usize;
+    if target_index >= log.len() {
+        error!("Rollback target out of range!");
+        return Err(custom_error("Rollback target out of range!"));
+    }
+    
+    let target_hash = &log[target_index].0;
+    
+    repo.checkout(target_hash)?;
+    set_current_hash(target_hash, verbose)?;
+    
+    Ok(())
 }
 
-// Set the 'current' generation to the latest generation.
+// Set current to latest commit
 pub fn latest(verbose: bool) -> Result<(), io::Error> {
     abort_if_locked();
 
-    match set_current(
-        match latest_number() {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        },
-        verbose,
-    ) {
-        Ok(_o) => {}
-        Err(e) => return Err(e),
-    };
-
-    return Ok(());
+    let repo = git::repo();
+    let log = repo.log(Some(1))?;
+    
+    if log.is_empty() {
+        error!("No generations found!");
+        return Err(custom_error("No generations found!"));
+    }
+    
+    let latest_hash = &log[0].0;
+    repo.checkout(latest_hash)?;
+    set_current_hash(latest_hash, verbose)?;
+    
+    Ok(())
 }
 
-// Set the 'current' generation to a specific generation.
-pub fn set_current(to: usize, verbose: bool) -> Result<(), io::Error> {
-    abort_if_locked();
-
-    if to
-        > match latest_number() {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        }
-    {
-        error!("Out of range! Too high!");
-        return Err(custom_error("Out of range!"));
-    }
-
-    if to < 1 {
-        error!("Out of range! Too low!");
-        return Err(custom_error("Out of range!"));
-    }
-
-    match file::write(to.to_string().trim(), &places::gens().add_str("current")) {
+// Set current generation hash
+pub fn set_current_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
+    let current_path = places::gens().add_str("current");
+    
+    match file::write(hash, &current_path) {
         Ok(_) => {
             if verbose {
-                info!("Set 'current' to: {}", to);
+                info!("Set 'current' to: {}", hash);
             }
-
-            return Ok(());
+            Ok(())
         }
         Err(e) => {
             error!("Failed to create/write 'current' tracking file!");
-            return Err(e);
+            Err(e)
         }
-    };
+    }
 }
 
-// Set the 'built' generation to a specific generation.
-pub fn set_built(to: usize, verbose: bool) -> Result<(), io::Error> {
-    abort_if_locked();
-
-    if to
-        > match latest_number() {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        }
-    {
-        error!("Out of range! Too high!");
-        return Err(custom_error("Out of range!"));
-    }
-
-    if to < 1 {
-        error!("Out of range! Too low!");
-        return Err(custom_error("Out of range!"));
-    }
-
-    match file::write(to.to_string().trim(), &places::gens().add_str("built")) {
-        Ok(_o) => {
+// Set built generation hash
+pub fn set_built_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
+    let built_path = places::gens().add_str("built");
+    
+    match file::write(hash, &built_path) {
+        Ok(_) => {
             if verbose {
-                info!("Set 'built' to: {}", to);
+                info!("Set 'built' to: {}", hash);
             }
-
-            return Ok(());
+            Ok(())
         }
         Err(e) => {
             error!("Failed to create/write 'built' tracking file!");
-            return Err(e);
-        }
-    };
-}
-
-// Get the 'current' generation number.
-pub fn get_current() -> Result<usize, io::Error> {
-    let contents = match file::read(&places::gens().add_str("current")) {
-        Ok(o) => o,
-        Err(e) => {
-            error!("Failed to read 'current' file!");
-            return Err(e);
-        }
-    };
-
-    let generation: usize = match contents.trim().parse() {
-        Ok(o) => o,
-        Err(_e) => {
-            error!(
-                "Failed to parse number from 'current' file! (Maybe 'current' file is corrupted?)"
-            );
-            return Err(custom_error(
-                "Failed to parse number out of 'current' file!",
-            ));
-        }
-    };
-
-    return Ok(generation);
-}
-
-// Get the currently built generation number. (With output.)
-pub fn get_built() -> Result<usize, io::Error> {
-    return get_built_core(true);
-}
-
-// Get the currently built generation number. (Without output.)
-pub fn get_built_no_output() -> Result<usize, io::Error> {
-    return get_built_core(false);
-}
-
-// Get the currently built generation number. (CORE)
-pub fn get_built_core(output: bool) -> Result<usize, io::Error> {
-    let contents = match file::read(&places::gens().add_str("built")) {
-        Ok(o) => o,
-        Err(e) => {
-            if output {
-                error!("Failed to read 'built' file!");
-            }
-
-            return Err(e);
-        }
-    };
-
-    let generation: usize = match contents.trim().parse() {
-        Ok(o) => o,
-        Err(_e) => {
-            if output {
-                error!(
-                    "Failed to parse number from 'built' file! (Maybe 'built' file is corrupted?)"
-                );
-            }
-
-            return Err(custom_error("Failed to parse number out of 'built' file!"));
-        }
-    };
-
-    return Ok(generation);
-}
-
-// Has a generation been built yet?
-pub fn been_built() -> bool {
-    return places::gens().add_str("built").exists();
-}
-
-// Delete old generations.
-pub fn delete_old(how_many: usize, verbose: bool) -> Result<(), io::Error> {
-    abort_if_locked();
-
-    let offset = match get_oldest() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    let latest_gen = match latest_number() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    for i in offset..(how_many + offset) {
-        if i > latest_gen {
-            break;
-        }
-
-        match delete(i, verbose) {
-            Ok(_) => (), // This is a rare instance where the matched function actually did the info!() itself!
-            Err(e) => return Err(e),
-        };
-    }
-
-    return Ok(());
-}
-
-// Delete a specific generation.
-pub fn delete(generation: usize, verbose: bool) -> Result<(), io::Error> {
-    abort_if_locked();
-
-    if match is_current(generation) {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    } {
-        warning!("Could not delete generation {}, because it is the 'current' generation, and is protected!", generation);
-        return Ok(());
-    }
-
-    if been_built() {
-        if match is_built(generation) {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        } {
-            warning!("Could not delete generation {}, because it is the currently built generation, and is protected!", generation);
-            return Ok(());
+            Err(e)
         }
     }
-
-    if match exists(generation) {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    } == false
-    {
-        error!("Generation {} does not exist!", generation);
-        return Err(custom_error("Generation does not exist!"));
-    }
-
-    match fs_action::delete(&places::gens().add_str(&generation.to_string())) {
-        Ok(_) => {
-            if verbose {
-                info!("Deleted generation: {}", generation);
-            }
-        }
-        Err(e) => {
-            error!("Failed to delete generation: {}", generation);
-            return Err(e);
-        }
-    };
-
-    return Ok(());
 }
 
-// Move a generation to another spot. (Number -> Number)
-pub fn move_gen(from: usize, to: usize, verbose: bool) -> Result<(), io::Error> {
-    abort_if_locked();
-
-    let current = is_current(from)?;
-    let built = is_built(from)?;
-
-    let from_path = places::gens().add_str(&from.to_string());
-    let to_path = places::gens().add_str(&to.to_string());
-
-    fs_action::mv(&from_path, &to_path)?;
-
-    if verbose {
-        info!("Moved generation: {from} -> {to}");
-    }
-
-    if current {
-        set_current(to, verbose)?;
-    }
-
-    if built {
-        set_built(to, verbose)?;
-    }
-
-    return Ok(());
-}
-
-// See if a generation exists.
-pub fn exists(generation: usize) -> Result<bool, io::Error> {
-    let gen_nums = match list_gen_nums() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    return Ok(gen_nums.contains(&generation));
-}
-
-// List generation numbers.
-pub fn list_gen_nums() -> Result<Vec<usize>, io::Error> {
-    let gen_list = match list_with_no_calls() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    let mut gen_nums: Vec<usize> = Vec::new();
-
-    for i in gen_list.iter() {
-        gen_nums.push(match usize_from_gen_name(i.0.as_str()) {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        });
-    }
-
-    return Ok(gen_nums);
-}
-
-// Parse generation name to usize.
-pub fn usize_from_gen_name(name: &str) -> Result<usize, io::Error> {
-    return Ok(match name.trim().parse() {
-        Ok(o) => o,
-        Err(_e) => {
-            error!("Failed to parse invalid generation name! ({})", name.trim());
-            return Err(custom_error("Failed to parse invalid generation name!"));
-        }
-    });
-}
-
-// Return true or false based on if the given generation is the 'current' generation.
-pub fn is_current(generation: usize) -> Result<bool, io::Error> {
-    if generation
-        == match get_current() {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        }
-    {
-        return Ok(true);
-    } else {
-        return Ok(false);
-    }
-}
-
-// Return true or false based on if the given generation is the built generation.
-pub fn is_built(generation: usize) -> Result<bool, io::Error> {
-    if generation
-        == match get_built() {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        }
-    {
-        return Ok(true);
-    } else {
-        return Ok(false);
-    }
-}
-
-// List all generations. (NORMAL)
+// List all generations (Git commits)
 pub fn list() -> Result<Vec<(String, String, bool, bool)>, io::Error> {
-    let gen_listed = match directory::list_items(&places::gens()) {
-        Ok(o) => o,
-        Err(e) => {
-            error!(
-                "Failed to list the generations directory! ({})",
-                places::gens().to_string()
-            );
-            return Err(e);
-        }
-    };
-
-    let mut generations: Vec<Path> = Vec::new();
-
-    for i in gen_listed.into_iter() {
-        match i.path_type() {
-            PathType::File => {}
-            PathType::Directory => generations.push(i),
-            PathType::Invalid => {
-                error!("Found invalid path! (Listing generations.)");
-                return Err(custom_error("Found invalid path."));
-            }
-        };
-    }
-
-    let mut gens_with_info: Vec<(String, String, bool, bool)> = Vec::new();
+    let repo = git::repo();
+    let commits = repo.log(None)?;
     
-    let current_number = match get_current() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
+    let current_hash = match get_current_hash() {
+        Ok(hash) => hash,
+        Err(_) => String::new(),
     };
-    let built_number = match get_built_no_output() {
-        Ok(o) => o,
-        Err(_e) => 0,
+    
+    let built_hash = match get_built_hash() {
+        Ok(hash) => hash,
+        Err(_) => String::new(),
     };
-
-    for i in generations.iter() {
-        let generation_name = i.basename();
-
-        let commit_msg = file::read(&i.add_str("commit"))
-            .unwrap_or(String::from("<< COMMIT MESSAGE MISSING >>"));
-
-        let is_current = generation_name == current_number.to_string();
-        let is_built = generation_name == built_number.to_string();
-
-        gens_with_info.push((generation_name, commit_msg, is_current, is_built));
+    
+    let mut gens: Vec<(String, String, bool, bool)> = Vec::new();
+    
+    for (i, (hash, message)) in commits.iter().enumerate() {
+        gens.push((
+            format!("{}", i + 1), // Display as 1-based index
+            message.clone(),
+            hash == &current_hash,
+            hash == &built_hash,
+        ));
     }
-
-    return Ok(gens_with_info);
+    
+    Ok(gens)
 }
 
-// List all generations. (ISOLATED MODE | For avoiding errors with called un-needed functions!)
-pub fn list_with_no_calls() -> Result<Vec<(String, String, bool, bool)>, io::Error> {
-    let gen_listed = match directory::list_items(&places::gens()) {
-        Ok(o) => o,
-        Err(e) => {
-            error!(
-                "Failed to list the generations directory! ({})",
-                places::gens().to_string()
-            );
-            return Err(e);
-        }
-    };
-
-    let mut generations: Vec<Path> = Vec::new();
-
-    for i in gen_listed.into_iter() {
-        match i.path_type() {
-            PathType::File => {}
-            PathType::Directory => generations.push(i),
-            PathType::Invalid => {
-                error!("Found invalid path! (Listing generations.)");
-                return Err(custom_error("Found invalid path."));
-            }
-        };
-    }
-
-    let mut gens_with_info: Vec<(String, String, bool, bool)> = Vec::new();
-
-    for i in generations.iter() {
-        let generation_name = i.basename();
-
-        let commit_msg = file::read(&i.add_str("commit"))
-            .unwrap_or(String::from("<< COMMIT MESSAGE MISSING >>"));
-
-        gens_with_info.push((generation_name, commit_msg, false, false));
-    }
-
-    return Ok(gens_with_info);
-}
-
-// Print out the list of generations.
+// Print out the list of generations
 pub fn list_print() -> Result<(), io::Error> {
-    let list_items = match list() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    let list_items_sorted = match sort_list_vector(&list_items) {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
+    let list_items = list()?;
+    
     let mut max_digits: usize = 0;
-
-    if list_items_sorted.len() > 0 {
-        max_digits = list_items_sorted[list_items_sorted.len() - 1]
+    
+    if list_items.len() > 0 {
+        max_digits = list_items[list_items.len() - 1]
             .0
             .to_string()
             .trim()
             .len();
     }
-
-    for i in list_items_sorted.iter() {
+    
+    for i in list_items.iter() {
         let mut misc_text = String::new();
-
+        
         if i.2 {
             misc_text.push_str(
                 format!(
@@ -1016,7 +642,7 @@ pub fn list_print() -> Result<(), io::Error> {
                 .as_str(),
             );
         }
-
+        
         if i.3 {
             misc_text.push_str(
                 format!(
@@ -1028,103 +654,40 @@ pub fn list_print() -> Result<(), io::Error> {
                 .as_str(),
             );
         }
-
+        
         let mut tabbed = String::new();
-
+        
         for _j in 0..(max_digits - i.0.trim().len()) {
             tabbed.push_str(" ");
         }
-
+        
         generic!("{}{} ... ({}){}", tabbed, i.0, i.1, misc_text);
     }
-
-    return Ok(());
+    
+    Ok(())
 }
 
-// Get only list vector generation names.
-fn get_list_vector_names(list_vec: &Vec<(String, String, bool, bool)>) -> Vec<String> {
-    let mut new_vec: Vec<String> = Vec::new();
-
-    for i in list_vec.iter() {
-        new_vec.push(i.0.to_string());
+// Get generation hash from display number
+pub fn get_hash_from_number(num: usize) -> Result<String, io::Error> {
+    let repo = git::repo();
+    let commits = repo.log(None)?;
+    
+    if num == 0 || num > commits.len() {
+        error!("Generation number {} out of range!", num);
+        return Err(custom_error("Generation number out of range!"));
     }
-
-    return new_vec;
+    
+    Ok(commits[num - 1].0.clone()) // Convert to 0-based index
 }
 
-// Sort list vector.
-fn sort_list_vector(
-    list_vec: &Vec<(String, String, bool, bool)>,
-) -> Result<Vec<(String, String, bool, bool)>, io::Error> {
-    if list_vec.len() == 0 {
-        return Ok(list_vec.clone());
-    }
-
-    let list_vec_names = get_list_vector_names(&list_vec);
-
-    let mut list_vec_nums: Vec<usize> = Vec::new();
-
-    for i in list_vec_names.iter() {
-        list_vec_nums.push(match usize_from_gen_name(i) {
-            Ok(o) => o,
-            Err(e) => return Err(e),
-        });
-    }
-
-    list_vec_nums.sort();
-
-    let mut new_vec: Vec<(String, String, bool, bool)> = Vec::new();
-
-    for i in list_vec_nums.iter() {
-        for j in list_vec.iter() {
-            let j_num: usize = match usize_from_gen_name(j.0.as_str()) {
-                Ok(o) => o,
-                Err(e) => return Err(e),
-            };
-
-            if &j_num == i {
-                new_vec.push(j.clone());
-                break;
-            }
-        }
-    }
-
-    return Ok(new_vec);
-}
-
-// Get oldest generation name.
-pub fn get_oldest() -> Result<usize, io::Error> {
-    let gen_names = get_list_vector_names(&match sort_list_vector(&match list_with_no_calls() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    }) {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    });
-
-    if gen_names.len() == 0 {
-        error!("Tried to call generation::get_oldest(), when there are no generations!");
-        return Err(custom_error("Not enough generations!"));
-    }
-
-    let oldest_name = gen_names[0].to_string();
-
-    let oldest_number: usize = match usize_from_gen_name(oldest_name.as_str()) {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
-
-    return Ok(oldest_number);
-}
-
-// Get the 'current' generation TOML file.
+// Get the current generation TOML file path
 pub fn current_gen() -> Result<Path, io::Error> {
-    let current = match get_current() {
-        Ok(o) => o,
-        Err(e) => return Err(e),
-    };
+    let _current_hash = get_current_hash()?;
+    let gen_path = places::gens().add_str("gen.toml");
+    Ok(gen_path)
+}
 
-    return Ok(places::gens()
-        .add_str(&current.to_string())
-        .add_str("gen.toml"));
+// Check if a generation has been built
+pub fn been_built() -> bool {
+    places::gens().add_str("built").exists()
 }

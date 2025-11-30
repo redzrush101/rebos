@@ -78,24 +78,7 @@ fn handle_gen_command(command: &cli::GenCommands) -> Result<(), Box<dyn std::err
                 Err(_) => return Err("Failed to list generations".into()),
             };
         }
-        cli::GenCommands::CleanDups => {
-            match generation::management::clean_dups(true) {
-                Ok(o) => success!("Deleted {o} generations!"),
-                Err(_) => return Err("Failed to clean duplicate generations".into()),
-            };
-        }
-        cli::GenCommands::Align => {
-            match generation::management::align(true) {
-                Ok(o) => success!("Aligned {o} generations!"),
-                Err(_) => return Err("Failed to align generations".into()),
-            };
-        }
-        cli::GenCommands::TidyUp => {
-            match generation::management::tidy_up() {
-                Ok(_) => (),
-                Err(_) => return Err("Failed to tidy up generations".into()),
-            };
-        }
+        
         cli::GenCommands::Info => {
             let generation = match generation::gen(crate::config::ConfigSide::User) {
                 Ok(o) => o,
@@ -105,49 +88,53 @@ fn handle_gen_command(command: &cli::GenCommands) -> Result<(), Box<dyn std::err
             crate::obj_print::generation(&generation);
         }
         cli::GenCommands::Latest => {
-            info!(
-                "Latest generation number is: {}",
-                match generation::latest_number() {
-                    Ok(o) => o,
-                    Err(_) => return Err("Failed to get latest generation number".into()),
+            match generation::list() {
+                Ok(generations) => {
+                    if !generations.is_empty() {
+                        info!("Latest generation is: {}", generations[0].0);
+                    } else {
+                        warning!("No generations found");
+                    }
                 }
-            );
-        }
-        cli::GenCommands::DeleteOld(h) => {
-            info!("Deleting old generations...");
-
-            match generation::delete_old(h.how_many, true) {
-                Ok(_) => success!("Successfully deleted {} generations!", h.how_many),
-                Err(_) => return Err("Failed to delete old generations".into()),
+                Err(_) => return Err("Failed to get latest generation".into()),
             };
         }
-        cli::GenCommands::Delete(g) => {
-            match generation::delete(g.generation, true) {
-                Ok(_) => (), // Handled by delete().
-                Err(_) => return Err("Failed to delete generation".into()),
-            };
-        }
+        
         cli::GenCommands::Diff { old, new } => {
-            if generation::gen_exists(*old) == false
-                || generation::gen_exists(*new) == false
-            {
-                fatal!("Generation not found!");
-                return Err("Generation not found".into());
-            }
+            let hash_1 = match generation::get_hash_from_number(*old) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    fatal!("Generation {} not found!", old);
+                    return Err("Generation not found".into());
+                }
+            };
+            
+            let hash_2 = match generation::get_hash_from_number(*new) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    fatal!("Generation {} not found!", new);
+                    return Err("Generation not found".into());
+                }
+            };
 
-            let gen_1 = generation::get_gen_from_usize(*old).unwrap();
-            let gen_2 = generation::get_gen_from_usize(*new).unwrap();
-
-            let commit_1 = generation::get_gen_commit_from_usize(*old).unwrap();
-            let commit_2 = generation::get_gen_commit_from_usize(*new).unwrap();
+            let gen_1 = match generation::get_gen_from_hash(&hash_1) {
+                Ok(gen) => gen,
+                Err(_) => return Err("Failed to get generation".into()),
+            };
+            
+            let gen_2 = match generation::get_gen_from_hash(&hash_2) {
+                Ok(gen) => gen,
+                Err(_) => return Err("Failed to get generation".into()),
+            };
 
             let history = library::history_gen(&gen_1, &gen_2);
 
             println!(
-                "\n{} {} {}",
-                commit_1.bright_cyan().bold(),
+                "
+{} {} {}",
+                format!("gen:{}", old).bright_cyan().bold(),
                 "->".bright_black().bold(),
-                commit_2.bright_cyan().bold()
+                format!("gen:{}", new).bright_cyan().bold()
             );
 
             println!("");
@@ -195,8 +182,13 @@ fn handle_current_command(command: &cli::CurrentCommands) -> Result<(), Box<dyn 
         }
         cli::CurrentCommands::Set(s) => {
             info!("Jumping to generation {}...", s.to);
+            
+            let hash = match generation::get_hash_from_number(s.to) {
+                Ok(hash) => hash,
+                Err(_) => return Err("Failed to get generation hash".into()),
+            };
 
-            match generation::set_current(s.to, true) {
+            match generation::set_current_hash(&hash, true) {
                 Ok(_) => success!("Jumped to generation {} successfully!", s.to),
                 Err(_) => return Err("Failed to set current generation".into()),
             };
