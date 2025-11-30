@@ -98,7 +98,7 @@ pub fn username() -> String {
         Ok(username) => username,
         Err(_) => match std::env::var("USERNAME") {
             Ok(username) => username,
-            Err(_) => "user".to_string(), // fallback
+            Err(_) => "user".to_string(),
         }
     }
 }
@@ -181,7 +181,6 @@ pub fn history(array_1: &[String], array_2: &[String]) -> Vec<History> {
 
     let mut history_vec: Vec<History> = Vec::new();
 
-    // Find removed items (in set_1 but not in set_2) - O(n) instead of O(n²)
     for item in &set_1 {
         if !item.trim().is_empty() && !set_2.contains(item) {
             history_vec.push(History {
@@ -191,7 +190,6 @@ pub fn history(array_1: &[String], array_2: &[String]) -> Vec<History> {
         }
     }
 
-    // Find added items (in set_2 but not in set_1) - O(n) instead of O(n²)
     for item in &set_2 {
         if !item.trim().is_empty() && !set_1.contains(item) {
             history_vec.push(History {

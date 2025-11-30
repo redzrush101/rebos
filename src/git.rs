@@ -139,7 +139,6 @@ impl GitRepo {
     }
 }
 
-// Global Git repository instance
 pub fn repo() -> GitRepo {
     GitRepo::new()
 }

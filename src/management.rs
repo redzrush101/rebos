@@ -157,7 +157,6 @@ impl Manager {
         Ok(())
     }
 
-    /// Returns a vector of all installed items that arent in the managers list
     pub fn get_other(&self, items: &[String]) -> Result<Vec<String>, io::Error> {
         if self.list.is_some() {
             let mut others = self.list()?;
@@ -168,8 +167,6 @@ impl Manager {
         }
     }
 
-    /// Gets a list of installed {plural_name}
-    /// Expects that the list command exists for the manager
     pub fn list(&self) -> Result<Vec<String>, io::Error> {
         let list_cmd = self.list.as_ref().expect("Command should exist");
 
@@ -321,7 +318,6 @@ pub fn upgrade_managers(
     Ok(())
 }
 
-// TODO: add info and success messages
 pub fn list_others(managers: &Option<Vec<String>>, remove: bool) -> Result<(), io::Error> {
     let curr_gen = gen(ConfigSide::System)?;
 

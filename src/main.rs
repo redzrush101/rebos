@@ -1,19 +1,18 @@
-mod cli; // For argument parsing and command structuring.
-mod config; // Configuration stuff.
-mod dispatch; // Command dispatch and handling.
-mod generation; // The generations system.
-mod git; // Git operations.
-mod hook; // Hook stuff.
-mod library; // Full of functions.
+mod cli;
+mod config;
+mod dispatch;
+mod generation;
+mod git;
+mod hook;
+mod library;
 
-mod management; // Stuff related to item management.
-mod obj_print; // Print objects.
-mod obj_print_boilerplate; // Boilerplate code for obj print.
-mod places; // Where is stuff stored?
+mod management;
+mod obj_print;
+mod obj_print_boilerplate;
+mod places;
 
 
 
-// Import stuff from source files and crates.
 use clap::Parser;
 use colored::Colorize;
 
@@ -23,22 +22,17 @@ use piglog::prelude::*;
 use piglog::*;
 use std::io::{self, Write};
 
-// The exit code for the program.
 #[derive(PartialEq)]
 enum ExitCode {
     Success,
     Fail,
 }
 
-// Use this function for testing code!
 fn test_code() {}
 
-// Cleanup when Rebos fails.
 fn error_cleanup() {
-    // Locking functionality removed - no cleanup needed
 }
 
-// We are using main() to run another function, and exit according to the exit code.
 fn main() -> std::process::ExitCode {
     match app() {
         ExitCode::Success => std::process::ExitCode::SUCCESS,
@@ -50,10 +44,9 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-// The "main" function.
 fn app() -> ExitCode {
 
-    test_code(); // This function is for nothing but testing code whilst developing!
+    test_code();
 
     match is_root_user() {
         true => {
@@ -64,7 +57,6 @@ fn app() -> ExitCode {
         false => {}
     };
 
-    // Migration for legacy directory location! ($HOME/.rebos-base -> $XDG_STATE_HOME/rebos)
     if places::base_legacy().exists() {
         warning!("Detected Rebos base at legacy location, moving it to new location...");
         generic!(
@@ -125,7 +117,6 @@ fn app() -> ExitCode {
 
 
 
-// Ask for a yes or no input.
 pub fn bool_question<S: AsRef<str>>(question: S, fallback: bool) -> bool {
     let question = question.as_ref();
 
@@ -153,7 +144,6 @@ pub fn bool_question<S: AsRef<str>>(question: S, fallback: bool) -> bool {
     }
 }
 
-// Ask for user input.
 pub fn input<S: AsRef<str>>(prefix: S) -> String {
     let mut answer = String::new();
 

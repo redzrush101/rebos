@@ -90,11 +90,9 @@ impl GenerationUtils for Generation {
 }
 
 pub trait GenerationUtils {
-    /// Extend all of the fields from one Generation object to another, another being the caller
     fn extend(&mut self, other_gen: Generation);
 }
 
-// Return generation structure for...
 pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
     let mut generation = match read_to_gen(&config_for(Config::Generation, side)?) {
         Ok(o) => o,
@@ -148,12 +146,10 @@ pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
 
 
 
-// Read a file and return a Generation object.
 fn read_to_gen(path: &Path) -> Result<Generation, io::Error> {
     let gen_string = match std::fs::read_to_string(path) {
         Ok(o) => o,
         Err(e) => {
-            // Don't error if file doesn't exist, just return default generation
             if e.kind() == io::ErrorKind::NotFound {
                 return Ok(Generation::default());
             }
@@ -174,11 +170,9 @@ fn read_to_gen(path: &Path) -> Result<Generation, io::Error> {
     }
 }
 
-// Get generation from Git commit hash
 pub fn get_gen_from_hash(hash: &str) -> Result<Generation, io::Error> {
     let repo = git::repo();
     
-    // Try to get gen.toml from the commit
     match repo.get_file_content_at_hash(hash, "gen.toml") {
         Ok(content) => {
             match toml::from_str(&content) {
@@ -190,7 +184,6 @@ pub fn get_gen_from_hash(hash: &str) -> Result<Generation, io::Error> {
             }
         }
         Err(e) => {
-            // If gen.toml doesn't exist in this commit, return default generation
             if e.kind() == io::ErrorKind::NotFound {
                 return Ok(Generation::default());
             }
@@ -199,13 +192,11 @@ pub fn get_gen_from_hash(hash: &str) -> Result<Generation, io::Error> {
     }
 }
 
-// Get current generation hash
 pub fn get_current_hash() -> Result<String, io::Error> {
     let repo = git::repo();
     repo.get_current_hash()
 }
 
-// Get built generation hash
 pub fn get_built_hash() -> Result<String, io::Error> {
     let built_path = places::gens().join("built");
     
@@ -220,7 +211,6 @@ pub fn get_built_hash() -> Result<String, io::Error> {
     }
 }
 
-// Create a new generation commit
 pub fn commit(msg: &str) -> Result<String, io::Error> {
     
 
@@ -237,7 +227,6 @@ pub fn commit(msg: &str) -> Result<String, io::Error> {
         }
     };
 
-    // Write generation to file
     let gen_path = places::gens().join("gen.toml");
     match std::fs::write(&gen_path, &user_gen_string) {
         Ok(_) => info!("Wrote generation file"),
@@ -247,7 +236,6 @@ pub fn commit(msg: &str) -> Result<String, io::Error> {
         }
     };
 
-    // Commit to Git
     let repo = git::repo();
     let hash = repo.commit(msg)?;
     
@@ -256,7 +244,6 @@ pub fn commit(msg: &str) -> Result<String, io::Error> {
         return Ok(String::new());
     }
 
-    // Set as current
     set_current_hash(&hash, true)?;
 
     Ok(hash)
@@ -327,11 +314,9 @@ fn get_order(gen: &Generation) -> Result<Vec<String>, io::Error> {
     Ok(return_order)
 }
 
-// Apply differences between two generations
 fn apply_diffs(built_gen: &Generation, curr_gen: &Generation) -> Result<(), io::Error> {
     let curr_order: Vec<String> = get_order(curr_gen)?;
 
-    // Remove old items, add new items
     for i in curr_order.iter() {
         let man = load_manager(i)?;
 
@@ -362,7 +347,6 @@ fn apply_diffs(built_gen: &Generation, curr_gen: &Generation) -> Result<(), io::
 
     let built_order: Vec<String> = get_order(built_gen)?;
 
-    // Remove items from managers that were removed from the generation
     for i in built_order.iter() {
         let built_items = built_gen.managers.get(i).unwrap();
 
@@ -378,7 +362,6 @@ fn apply_diffs(built_gen: &Generation, curr_gen: &Generation) -> Result<(), io::
     Ok(())
 }
 
-// Apply full generation (for first-time builds)
 fn apply_full(curr_gen: &Generation) -> Result<(), io::Error> {
     let curr_order = get_order(curr_gen)?;
 
@@ -393,7 +376,6 @@ fn apply_full(curr_gen: &Generation) -> Result<(), io::Error> {
     Ok(())
 }
 
-// Build the current system generation
 pub fn build() -> Result<(), io::Error> {
     
 
@@ -428,7 +410,6 @@ pub fn build() -> Result<(), io::Error> {
 
             println!("");
 
-            // TODO: Implement summary printing for Git-based system
             note!("Summary printing not yet implemented for Git-based system");
 
             println!("");
@@ -440,7 +421,6 @@ pub fn build() -> Result<(), io::Error> {
         }
     };
 
-    // Set built hash
     set_built_hash(&current_hash, true)?;
 
     hook::run("post_build")?;
@@ -448,7 +428,6 @@ pub fn build() -> Result<(), io::Error> {
     Ok(())
 }
 
-// Rollback to a previous commit
 pub fn rollback(by: isize, verbose: bool) -> Result<(), io::Error> {
     
 
@@ -476,7 +455,6 @@ pub fn rollback(by: isize, verbose: bool) -> Result<(), io::Error> {
     Ok(())
 }
 
-// Set current to latest commit
 pub fn latest(verbose: bool) -> Result<(), io::Error> {
     
 
@@ -495,7 +473,6 @@ pub fn latest(verbose: bool) -> Result<(), io::Error> {
     Ok(())
 }
 
-// Set current generation hash
 pub fn set_current_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
     let current_path = places::gens().join("current");
     
@@ -513,7 +490,6 @@ pub fn set_current_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
     }
 }
 
-// Set built generation hash
 pub fn set_built_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
     let built_path = places::gens().join("built");
     
@@ -531,7 +507,6 @@ pub fn set_built_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
     }
 }
 
-// List all generations (Git commits)
 pub fn list() -> Result<Vec<(String, String, bool, bool)>, io::Error> {
     let repo = git::repo();
     let commits = repo.log(None)?;
@@ -550,7 +525,7 @@ pub fn list() -> Result<Vec<(String, String, bool, bool)>, io::Error> {
     
     for (i, (hash, message)) in commits.iter().enumerate() {
         gens.push((
-            format!("{}", i + 1), // Display as 1-based index
+            format!("{}", i + 1),
             message.clone(),
             hash == &current_hash,
             hash == &built_hash,
@@ -560,7 +535,6 @@ pub fn list() -> Result<Vec<(String, String, bool, bool)>, io::Error> {
     Ok(gens)
 }
 
-// Print out the list of generations
 pub fn list_print() -> Result<(), io::Error> {
     let list_items = list()?;
     
@@ -613,7 +587,6 @@ pub fn list_print() -> Result<(), io::Error> {
     Ok(())
 }
 
-// Get generation hash from display number
 pub fn get_hash_from_number(num: usize) -> Result<String, io::Error> {
     let repo = git::repo();
     let commits = repo.log(None)?;
@@ -623,17 +596,15 @@ pub fn get_hash_from_number(num: usize) -> Result<String, io::Error> {
         return Err(custom_error("Generation number out of range!"));
     }
     
-    Ok(commits[num - 1].0.clone()) // Convert to 0-based index
+    Ok(commits[num - 1].0.clone())
 }
 
-// Get the current generation TOML file path
 pub fn current_gen() -> Result<PathBuf, io::Error> {
     let _current_hash = get_current_hash()?;
     let gen_path = places::gens().join("gen.toml");
     Ok(gen_path)
 }
 
-// Check if a generation has been built
 pub fn been_built() -> bool {
     places::gens().join("built").exists()
 }

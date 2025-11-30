@@ -6,7 +6,6 @@ use std::env;
 use piglog::prelude::*;
 use piglog::*;
 
-// The setup function for the directories
 pub fn setup() -> Result<(), io::Error> {
     let directories = vec![
         base(),
@@ -20,14 +19,12 @@ pub fn setup() -> Result<(), io::Error> {
 
 
 
-/// The base directory of operations for Rebos (Legacy)
 pub fn base_legacy() -> PathBuf {
     env::var("HOME")
         .map(|home| PathBuf::from(home).join(".rebos-base"))
         .unwrap_or_else(|_| PathBuf::from("/tmp/.rebos-base"))
 }
 
-/// The base directory of operations for Rebos
 pub fn base() -> PathBuf {
     env::var("XDG_STATE_HOME")
         .map(|state| PathBuf::from(state).join("rebos"))
@@ -37,12 +34,10 @@ pub fn base() -> PathBuf {
         })
 }
 
-/// The directory of generations
 pub fn gens() -> PathBuf {
     base().join("generations")
 }
 
-/// User's Rebos config directory
 pub fn base_user() -> PathBuf {
     env::var("XDG_CONFIG_HOME")
         .map(|config| PathBuf::from(config).join("rebos"))

@@ -12,30 +12,29 @@ use crate::library::ensure_directories_exist;
 use crate::places;
 
 
-// Constants
 const DEFAULT_USER_GEN: &str =
 "# --------------------- #
 #    Generation File    #
 # --------------------- #
 
-# Other generation files to import. (Example: intensive_apps -> ~/.config/rebos/imports/intensive_apps.toml)
+# Import other generation files (relative to ~/.config/rebos/imports/)
 imports = [
     # \"intensive_apps\",
 ]
 
-# Packages to be installed via the native package manager.
+# System packages managed by your distro's package manager
 [managers.system]
 items = [
     # \"git\",
 ]
 
-# Packages to be installed via Flatpak.
+# Flatpak applications
 [managers.flatpak]
 items = [
     # \"com.github.tchx84.Flatseal\",
 ]
 
-# Packages to be installed via Cargo.
+# Rust crates installed via Cargo
 [managers.cargo]
 items = [
     # \"bacon\",
@@ -47,73 +46,57 @@ const DEFAULT_PACKAGE_MANAGER_CONFIG: &str =
 #    Manager Configuration    #
 # --------------------------- #
 
-# Make sure to enter the exact command you use as the normal user!
-# That means including 'sudo' or 'doas' or whatever if the command needs it.
-# Where you would put items, enter '#:?'.
+# Commands for package management - replace with your distro's commands
+# Use '#:?' as placeholder for package names
+add = \"\"           # Example: \"sudo apt install #:?\"
+remove = \"\"        # Example: \"sudo apt remove #:?\"
+sync = \"\"          # Example: \"sudo apt update\"
+upgrade = \"\"       # Example: \"sudo apt upgrade\"
 
-# Example: add = \"sudo apt install #:?\"
-
-add = \"\" # Example: sudo apt install #:?
-remove = \"\" # Example: sudo apt remove #:?
-sync = \"\" # Example: sudo apt update
-upgrade = \"\" # Example: sudo apt upgrade
-
+# Display name for this manager (used in output messages)
 plural_name = \"system packages\"
 
-hook_name = \"system_packages\" # This is used in hooks. (Example: post_system_packages_add)
-
-# ------------------------------- #
-#    Additional configuration.    #
-# ------------------------------- #
-
-# many_args = BOOL: Can you supply many items as an argument? Example: 'sudo apt install git vim wget'
+# Hook name prefix (used for hook scripts like pre_system_packages_add)
+hook_name = \"system_packages\"
 
 [config]
+# Can this manager handle multiple packages at once? (true/false)
 many_args = true
 ";
 
-const DEFAULT_FLATPAK_MANAGER_CONFIG: &str = "# Flatpak
-
+const DEFAULT_FLATPAK_MANAGER_CONFIG: &str = "# Flatpak application manager
 add = \"flatpak install #:?\"
 remove = \"flatpak uninstall #:?\"
 upgrade = \"flatpak upgrade\"
 
 plural_name = \"flatpaks\"
-
 hook_name = \"flatpaks\"
 
 [config]
 many_args = true
 ";
 
-const DEFAULT_CARGO_MANAGER_CONFIG: &str = "# Cargo
-
+const DEFAULT_CARGO_MANAGER_CONFIG: &str = "# Rust Cargo package manager
 add = \"cargo install #:?\"
 remove = \"cargo uninstall #:?\"
 
 plural_name = \"crates\"
-
 hook_name = \"crates\"
 
 [config]
 many_args = true
 ";
 
-// This determinds if a function should
-// use the files from the user's config,
-// or from the base() directory.
 #[derive(PartialEq, Clone, Copy)]
 pub enum ConfigSide {
     User,
     System,
 }
 
-// What to grab a config file for.
 pub enum Config {
     Generation,
 }
 
-// Create the user configuration.
 pub fn init_user_config() -> Result<(), io::Error> {
     let system_hostname = match crate::library::hostname() {
         Ok(o) => o,
@@ -173,7 +156,6 @@ pub fn init_user_config() -> Result<(), io::Error> {
     Ok(())
 }
 
-// Return path for a config file.
 pub fn config_for(config: Config, side: ConfigSide) -> Result<PathBuf, std::io::Error> {
     match config {
         Config::Generation => match side {
@@ -240,7 +222,6 @@ pub struct ConfigCheckMiscInfo {
     pub warnings: Vec<ConfigWarning>,
 }
 
-// Validate user configuration.
 pub fn check_config(
 ) -> Result<Result<ConfigCheckMiscInfo, (Vec<ConfigError>, ConfigCheckMiscInfo)>, io::Error> {
     let mut errors: Vec<ConfigError> = Vec::new();
