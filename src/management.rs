@@ -292,16 +292,11 @@ pub fn get_managers() -> Result<Vec<String>, io::Error> {
 }
 
 pub fn sync_managers(managers: &Option<Vec<String>>) -> Result<(), io::Error> {
-    let man_names = match *managers {
-        Some(ref man_names) => man_names,
-        None => &get_managers()?,
-    };
-    for man_name in man_names {
+    crate::library::for_each_manager(managers, |man_name| {
         info!("Syncing manager {man_name}");
-
         let manager = load_manager(man_name)?;
-        manager.sync()?;
-    }
+        manager.sync()
+    })?;
     success!("All managers synced successfully");
 
     Ok(())
@@ -315,17 +310,11 @@ pub fn upgrade_managers(
         sync_managers(managers)?;
     }
 
-    let man_names = match *managers {
-        Some(ref man_names) => man_names,
-        None => &get_managers()?,
-    };
-
-    for man_name in man_names {
+    crate::library::for_each_manager(managers, |man_name| {
         info!("Upgrading manager {man_name}");
-
         let manager = load_manager(man_name)?;
-        manager.upgrade()?;
-    }
+        manager.upgrade()
+    })?;
 
     success!("All managers upgraded successfully");
 

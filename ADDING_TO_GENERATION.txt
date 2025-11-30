@@ -1,6 +1,0 @@
-generation::build() - Make sure to do both the first time build, and the history based rebuild.
-generation::Generation::extend()
-obj_print::generation()
-library::history_gen()
-library::print_history_gen()
-config::DEFAULT_USER_GEN

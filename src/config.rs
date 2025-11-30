@@ -7,6 +7,7 @@ use std::io;
 
 use crate::config;
 use crate::generation;
+use crate::library::ensure_directories_exist;
 
 use crate::places;
 
@@ -129,17 +130,7 @@ pub fn init_user_config() -> Result<(), io::Error> {
         places::base_user().join("managers"),
     ];
 
-    for i in directories.iter() {
-        if !i.exists() {
-            match std::fs::create_dir_all(i) {
-                Ok(_o) => info!("Created directory: {}", i.display()),
-                Err(e) => {
-                    error!("Failed to create directory: {}", i.display());
-                    return Err(e);
-                }
-            };
-        }
-    }
+    ensure_directories_exist(&directories)?;
 
     let files = vec![
         (

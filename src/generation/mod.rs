@@ -116,7 +116,7 @@ pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
     }
 
     while generation.imports.len() > 0 {
-        let gen_imports = generation.imports.clone();
+        let gen_imports = std::mem::take(&mut generation.imports);
 
         for i in gen_imports.iter() {
             let i_gen = read_to_gen(
@@ -128,7 +128,7 @@ pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
             generation.extend(i_gen);
         }
 
-        let after_gen_imports = generation.imports.clone();
+        let after_gen_imports = std::mem::take(&mut generation.imports);
 
         for i in 0..after_gen_imports.len() {
             if gen_imports.contains(&after_gen_imports[i]) {

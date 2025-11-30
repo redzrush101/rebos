@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use colored::Colorize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use piglog::prelude::*;
 use piglog::*;
 use std::io;
@@ -53,12 +53,44 @@ pub fn custom_error(error: &str) -> io::Error {
     io::Error::new(io::ErrorKind::Other, error)
 }
 
-pub fn is_root_user() -> bool {
-    if username() == "root" {
-        true
-    } else {
-        false
+pub fn ensure_directories_exist(dirs: &[std::path::PathBuf]) -> Result<(), io::Error> {
+    for dir in dirs {
+        if !dir.exists() {
+            std::fs::create_dir_all(dir)
+                .map(|_| info!("Created directory: {}", dir.display()))?;
+        }
     }
+    Ok(())
+}
+
+pub fn for_each_manager<F>(managers: &Option<Vec<String>>, mut operation: F) -> Result<(), io::Error>
+where
+    F: FnMut(&str) -> Result<(), io::Error>,
+{
+    let man_names = match managers {
+        Some(ref man_names) => man_names,
+        None => &crate::management::get_managers()?,
+    };
+    
+    for man_name in man_names {
+        operation(man_name)?;
+    }
+    
+    Ok(())
+}
+
+pub fn log_and_return<T, E>(result: Result<T, E>, error_msg: &str) -> Result<T, E>
+where
+    E: std::fmt::Debug,
+{
+    result.map_err(|e| {
+        error!("{}", error_msg);
+        e
+    })
+}
+
+pub fn is_root_user() -> bool {
+    username() == "root"
 }
 
 pub fn username() -> String {
@@ -71,16 +103,9 @@ pub fn username() -> String {
     }
 }
 
-pub fn remove_array_duplicates<T: Clone + PartialEq>(dup_vec: &[T]) -> Vec<T> {
-    let mut new_vec: Vec<T> = Vec::new();
-
-    for i in dup_vec.iter() {
-        if new_vec.contains(i) == false {
-            new_vec.push(i.clone());
-        }
-    }
-
-    new_vec
+pub fn remove_array_duplicates<T: Clone + PartialEq + Eq + std::hash::Hash>(dup_vec: &[T]) -> Vec<T> {
+    let mut seen: HashSet<&T> = HashSet::new();
+    dup_vec.iter().filter(|item| seen.insert(item)).cloned().collect()
 }
 
 pub fn history_gen(gen_1: &Generation, gen_2: &Generation) -> HashMap<String, Vec<History>> {
@@ -151,30 +176,28 @@ pub fn print_history(diff_vec: &Vec<History>) {
 }
 
 pub fn history(array_1: &[String], array_2: &[String]) -> Vec<History> {
-    let lines_1 = remove_array_duplicates(array_1);
-    let lines_2 = remove_array_duplicates(array_2);
+    let set_1: HashSet<&String> = array_1.iter().collect();
+    let set_2: HashSet<&String> = array_2.iter().collect();
 
     let mut history_vec: Vec<History> = Vec::new();
 
-    for i in lines_1.iter() {
-        if i.trim() != "" {
-            if lines_2.contains(i) == false {
-                history_vec.push(History {
-                    mode: HistoryMode::Remove,
-                    line: i.to_string(),
-                });
-            }
+    // Find removed items (in set_1 but not in set_2) - O(n) instead of O(n²)
+    for item in &set_1 {
+        if !item.trim().is_empty() && !set_2.contains(item) {
+            history_vec.push(History {
+                mode: HistoryMode::Remove,
+                line: (*item).clone(),
+            });
         }
     }
 
-    for i in lines_2.iter() {
-        if i.trim() != "" {
-            if lines_1.contains(i) == false {
-                history_vec.push(History {
-                    mode: HistoryMode::Add,
-                    line: i.to_string(),
-                });
-            }
+    // Find added items (in set_2 but not in set_1) - O(n) instead of O(n²)
+    for item in &set_2 {
+        if !item.trim().is_empty() && !set_1.contains(item) {
+            history_vec.push(History {
+                mode: HistoryMode::Add,
+                line: (*item).clone(),
+            });
         }
     }
 
@@ -182,17 +205,18 @@ pub fn history(array_1: &[String], array_2: &[String]) -> Vec<History> {
 }
 
 pub fn hostname() -> Result<String, io::Error> {
-    return Ok(match hostname::get() {
-        Ok(o) => match o.into_string() {
-            Ok(o) => o,
-            Err(_e) => {
+    hostname::get()
+        .and_then(|os_str| os_str.into_string()
+            .map_err(|_| {
                 error!("Failed to parse hostname OsString into String type!");
-                return Err(custom_error("Failed to parse OsString into String!"));
-            },
-        },
-        Err(e) => {
-            error!("Failed to get system hostname!");
-            return Err(e);
-        },
-    });
+                custom_error("Failed to parse OsString into String!")
+            }))
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::Other {
+                e
+            } else {
+                error!("Failed to get system hostname!");
+                e
+            }
+        })
 }

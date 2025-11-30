@@ -13,15 +13,7 @@ pub fn setup() -> Result<(), io::Error> {
         gens(),
     ];
 
-    for i in directories.iter() {
-        match std::fs::create_dir_all(i) {
-            Ok(_o) => info!("Created directory: {}", i.display()),
-            Err(e) => {
-                error!("Failed to create directory: {}", i.display());
-                return Err(e);
-            },
-        };
-    }
+    crate::library::ensure_directories_exist(&directories)?;
 
     Ok(())
 }
