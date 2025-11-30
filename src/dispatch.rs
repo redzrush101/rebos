@@ -1,6 +1,6 @@
 use crate::cli::{self, Commands};
 use crate::generation;
-use crate::lock;
+
 use crate::management;
 use crate::config;
 use crate::places;
@@ -26,8 +26,7 @@ pub fn handle_command(args: cli::Cli) -> Result<(), Box<dyn std::error::Error>> 
     match &args.command {
         Commands::Gen { command } => handle_gen_command(command)?,
         Commands::Config { command } => handle_config_command(command)?,
-        Commands::ForceUnlock => handle_force_unlock()?,
-        Commands::IsUnlocked => handle_is_unlocked()?,
+        
         Commands::Managers { command, managers } => handle_managers_command(command, managers)?,
         Commands::API { command } => handle_api_command(command)?,
         _ => {
@@ -58,10 +57,6 @@ fn setup() -> Result<(), std::io::Error> {
 }
 
 fn handle_gen_command(command: &cli::GenCommands) -> Result<(), Box<dyn std::error::Error>> {
-    match lock::lock_on() {
-        Ok(_) => (),
-        Err(_) => return Err("Failed to acquire lock".into()),
-    };
 
     match command {
         cli::GenCommands::Commit(c) => {
@@ -146,11 +141,6 @@ fn handle_gen_command(command: &cli::GenCommands) -> Result<(), Box<dyn std::err
         }
     };
 
-    match lock::lock_off() {
-        Ok(_) => (),
-        Err(_) => return Err("Failed to release lock".into()),
-    };
-
     Ok(())
 }
 
@@ -225,60 +215,7 @@ fn handle_config_command(command: &cli::ConfigCommands) -> Result<(), Box<dyn st
     Ok(())
 }
 
-fn handle_force_unlock() -> Result<(), Box<dyn std::error::Error>> {
-    if lock::is_lock_on() {
-        piglog::warning!(
-            "Force unlocking could harm the system if done with the wrong reason!"
-        );
-        piglog::warning!(
-            "You should only force unlock if you know that you ABSOLUTELY need to!"
-        );
-        piglog::warning!(
-            "{} {} {}",
-            "Really the ONLY time you should do this is if there is only",
-            "one Rebos process running, but the locking file was never",
-            "cleaned up, so Rebos thinks there is another Rebos process!",
-        );
 
-        if crate::bool_question("Are you REALLY sure you want to do this?", false) {
-            piglog::warning!(
-                "Force unlocking... use {} to cancel...",
-                "CTRL + C".bright_red().bold(),
-            );
-
-            let countdown_from: u8 = 5;
-
-            print!("Countdown: ");
-            for i in 0..countdown_from {
-                print!("{} ", format!("{}", countdown_from - i).bright_red().bold());
-                std::io::stdout().flush().unwrap();
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-            print!("\n");
-
-            match lock::lock_off_force() {
-                Ok(_) => piglog::success!("Unlocked Rebos!"),
-                Err(e) => {
-                    piglog::fatal!("Failed to unlock: {e}");
-                    return Err("Failed to force unlock".into());
-                }
-            };
-        } else {
-            piglog::info!("Aborting...");
-            return Err("Aborted by user".into());
-        }
-    } else {
-        piglog::info!("Not locked... skipping...");
-    }
-    Ok(())
-}
-
-fn handle_is_unlocked() -> Result<(), Box<dyn std::error::Error>> {
-    match lock::is_lock_on() {
-        false => Ok(()),
-        true => Err("System is locked".into()),
-    }
-}
 
 fn handle_managers_command(command: &cli::ManagerCommands, managers: &Option<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     match command {

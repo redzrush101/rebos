@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use colored::Colorize;
-use fspp::*;
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use piglog::prelude::*;
 use piglog::*;
@@ -13,14 +13,12 @@ use crate::config::{Config, ConfigSide};
 use crate::git;
 use crate::hook;
 use crate::library::*;
-use crate::lock::*;
+
 use crate::management::load_manager;
 use crate::places;
-use crate::system;
 
-trait Migrate<T> {
-    fn migrate(self) -> T;
-}
+
+
 
 #[derive(PartialEq, Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields, default)]
@@ -50,7 +48,7 @@ impl Default for Items {
     }
 }
 
-pub mod legacy;
+
 
 #[derive(PartialEq, Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields, default)]
@@ -103,7 +101,7 @@ pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
         Err(e) => return Err(e),
     };
 
-    let system_hostname = match system::hostname() {
+    let system_hostname = match crate::library::hostname() {
         Ok(o) => o,
         Err(e) => return Err(e),
     };
@@ -111,9 +109,9 @@ pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
     if side == ConfigSide::User {
         generation.extend(read_to_gen(
             &places::base_user()
-                .add_str("machines")
-                .add_str(&system_hostname)
-                .add_str("gen.toml"),
+                .join("machines")
+                .join(&system_hostname)
+                .join("gen.toml"),
         )?);
     }
 
@@ -123,8 +121,8 @@ pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
         for i in gen_imports.iter() {
             let i_gen = read_to_gen(
                 &places::base_user()
-                    .add_str("imports")
-                    .add_str(&format!("{i}.toml")),
+                    .join("imports")
+                    .join(format!("{i}.toml")),
             )?;
 
             generation.extend(i_gen);
@@ -148,43 +146,11 @@ pub fn gen(side: ConfigSide) -> Result<Generation, io::Error> {
     Ok(generation)
 }
 
-macro_rules! deserialize_legacy {
-    ($gen: ident, $string: expr, $gen_type: ty, $version: expr) => {
-        let mut should_try = false;
 
-        match $gen {
-            None => should_try = true,
-            Some(ref s) => {
-                match s {
-                    Err(_) => should_try = true,
-                    _ => (),
-                };
-            }
-        };
-
-        if should_try {
-            match toml::from_str::<$gen_type>($string) {
-                Ok(o) => {
-                    success!("Deserialized generation in legacy mode {}.x.x!", $version);
-
-                    $gen = Some(Ok(o.migrate()));
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to deserialize generation in legacy mode {}.x.x!",
-                        $version
-                    );
-
-                    $gen = Some(Err(e));
-                }
-            };
-        }
-    };
-}
 
 // Read a file and return a Generation object.
 fn read_to_gen(path: &Path) -> Result<Generation, io::Error> {
-    let gen_string = match file::read(path) {
+    let gen_string = match std::fs::read_to_string(path) {
         Ok(o) => o,
         Err(e) => {
             // Don't error if file doesn't exist, just return default generation
@@ -196,36 +162,16 @@ fn read_to_gen(path: &Path) -> Result<Generation, io::Error> {
         }
     };
 
-    Ok(match toml::from_str(&gen_string) {
-        Ok(o) => o,
+    match toml::from_str(&gen_string) {
+        Ok(o) => Ok(o),
         Err(e) => {
-            warning!(
-                "Failed to deserialize generation, attempting legacy modes... ('{}')",
-                path.to_string()
-            );
+            error!("Failed to deserialize generation file:");
+            error!("{e:#?}");
+            error!("Path: '{}'", path.display());
 
-            let mut gen: Option<Result<Generation, toml::de::Error>> = None;
-
-            deserialize_legacy!(gen, &gen_string, legacy::legacy_1::Generation, 1);
-            deserialize_legacy!(gen, &gen_string, legacy::legacy_2::Generation, 2);
-
-            match gen {
-                Some(s) => {
-                    match s {
-                        Ok(o) => o,
-                        Err(_) => {
-                            error!("Failed to deserialize in legacy modes! Regular deserialization error:");
-                            error!("{e:#?}");
-                            error!("Path: '{}'", path.to_string());
-
-                            return Err(custom_error("Failed to deserialize generation!"));
-                        }
-                    }
-                }
-                None => unreachable!(),
-            }
+            Err(custom_error("Failed to deserialize generation!"))
         }
-    })
+    }
 }
 
 // Get generation from Git commit hash
@@ -261,9 +207,9 @@ pub fn get_current_hash() -> Result<String, io::Error> {
 
 // Get built generation hash
 pub fn get_built_hash() -> Result<String, io::Error> {
-    let built_path = places::gens().add_str("built");
+    let built_path = places::gens().join("built");
     
-    match file::read(&built_path) {
+    match std::fs::read_to_string(&built_path) {
         Ok(content) => Ok(content.trim().to_string()),
         Err(e) => {
             if e.kind() == io::ErrorKind::NotFound {
@@ -276,7 +222,7 @@ pub fn get_built_hash() -> Result<String, io::Error> {
 
 // Create a new generation commit
 pub fn commit(msg: &str) -> Result<String, io::Error> {
-    abort_if_locked();
+    
 
     let user_gen = match gen(ConfigSide::User) {
         Ok(o) => o,
@@ -292,8 +238,8 @@ pub fn commit(msg: &str) -> Result<String, io::Error> {
     };
 
     // Write generation to file
-    let gen_path = places::gens().add_str("gen.toml");
-    match file::write(&user_gen_string, &gen_path) {
+    let gen_path = places::gens().join("gen.toml");
+    match std::fs::write(&gen_path, &user_gen_string) {
         Ok(_) => info!("Wrote generation file"),
         Err(e) => {
             error!("Failed to write generation file!");
@@ -318,12 +264,12 @@ pub fn commit(msg: &str) -> Result<String, io::Error> {
 
 fn get_order(gen: &Generation) -> Result<Vec<String>, io::Error> {
     let return_order = {
-        let path = places::base_user().add_str("manager_order.toml");
+        let path = places::base_user().join("manager_order.toml");
 
         if path.exists() {
             info!("Reading order rules from manager_order.toml...");
 
-            let order_obj: ManagerOrder = match toml::from_str(&file::read(&path)?) {
+            let order_obj: ManagerOrder = match toml::from_str(&std::fs::read_to_string(&path)?) {
                 Ok(o) => o,
                 Err(e) => {
                     error!("Failed to deserialize manager_order.toml!");
@@ -449,7 +395,7 @@ fn apply_full(curr_gen: &Generation) -> Result<(), io::Error> {
 
 // Build the current system generation
 pub fn build() -> Result<(), io::Error> {
-    abort_if_locked();
+    
 
     hook::run("pre_build")?;
 
@@ -504,7 +450,7 @@ pub fn build() -> Result<(), io::Error> {
 
 // Rollback to a previous commit
 pub fn rollback(by: isize, verbose: bool) -> Result<(), io::Error> {
-    abort_if_locked();
+    
 
     let repo = git::repo();
     let _current_hash = get_current_hash()?;
@@ -532,7 +478,7 @@ pub fn rollback(by: isize, verbose: bool) -> Result<(), io::Error> {
 
 // Set current to latest commit
 pub fn latest(verbose: bool) -> Result<(), io::Error> {
-    abort_if_locked();
+    
 
     let repo = git::repo();
     let log = repo.log(Some(1))?;
@@ -551,9 +497,9 @@ pub fn latest(verbose: bool) -> Result<(), io::Error> {
 
 // Set current generation hash
 pub fn set_current_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
-    let current_path = places::gens().add_str("current");
+    let current_path = places::gens().join("current");
     
-    match file::write(hash, &current_path) {
+    match std::fs::write(&current_path, hash) {
         Ok(_) => {
             if verbose {
                 info!("Set 'current' to: {}", hash);
@@ -569,9 +515,9 @@ pub fn set_current_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
 
 // Set built generation hash
 pub fn set_built_hash(hash: &str, verbose: bool) -> Result<(), io::Error> {
-    let built_path = places::gens().add_str("built");
+    let built_path = places::gens().join("built");
     
-    match file::write(hash, &built_path) {
+    match std::fs::write(&built_path, hash) {
         Ok(_) => {
             if verbose {
                 info!("Set 'built' to: {}", hash);
@@ -681,13 +627,13 @@ pub fn get_hash_from_number(num: usize) -> Result<String, io::Error> {
 }
 
 // Get the current generation TOML file path
-pub fn current_gen() -> Result<Path, io::Error> {
+pub fn current_gen() -> Result<PathBuf, io::Error> {
     let _current_hash = get_current_hash()?;
-    let gen_path = places::gens().add_str("gen.toml");
+    let gen_path = places::gens().join("gen.toml");
     Ok(gen_path)
 }
 
 // Check if a generation has been built
 pub fn been_built() -> bool {
-    places::gens().add_str("built").exists()
+    places::gens().join("built").exists()
 }

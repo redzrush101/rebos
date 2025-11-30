@@ -5,19 +5,19 @@ mod generation; // The generations system.
 mod git; // Git operations.
 mod hook; // Hook stuff.
 mod library; // Full of functions.
-mod lock; // Locking file functionality.
+
 mod management; // Stuff related to item management.
 mod obj_print; // Print objects.
 mod obj_print_boilerplate; // Boilerplate code for obj print.
 mod places; // Where is stuff stored?
-mod proc;
-mod system; // Used for getting system information. // Process management stuff for Rebos.
+
+
 
 // Import stuff from source files and crates.
 use clap::Parser;
 use colored::Colorize;
 
-use fspp::*;
+use std::path::{Path, PathBuf};
 use library::*;
 use piglog::prelude::*;
 use piglog::*;
@@ -35,14 +35,7 @@ fn test_code() {}
 
 // Cleanup when Rebos fails.
 fn error_cleanup() {
-    let lock_state = match lock::lock_state() {
-        Ok(o) => o,
-        Err(_) => return,
-    };
-    if lock_state == lock::LockState::OnOwned {
-        let _ = lock::lock_off(); // We don't have to handle this, since this is just
-                                  // cleanup and the exit code will be failure anyway.
-    }
+    // Locking functionality removed - no cleanup needed
 }
 
 // We are using main() to run another function, and exit according to the exit code.
@@ -59,8 +52,6 @@ fn main() -> std::process::ExitCode {
 
 // The "main" function.
 fn app() -> ExitCode {
-    // Rebos uses unique Rebos process IDs to prevent locking itself when locking other processes.
-    proc::init_proc_id();
 
     test_code(); // This function is for nothing but testing code whilst developing!
 
@@ -78,17 +69,17 @@ fn app() -> ExitCode {
         warning!("Detected Rebos base at legacy location, moving it to new location...");
         generic!(
             "'{}' -> '{}'",
-            places::base_legacy().to_string(),
-            places::base().to_string()
+            places::base_legacy().display().to_string(),
+            places::base().display().to_string()
         );
 
         if places::base().exists() {
-            match fs_action::delete(&places::base()) {
+            match std::fs::remove_dir_all(&places::base()) {
                 Ok(_) => (),
                 Err(e) => {
                     fatal!(
                         "Failed to delete directory: '{}'",
-                        places::base().to_string()
+                        places::base().display().to_string()
                     );
                     println!("{e:#?}");
 
@@ -97,13 +88,13 @@ fn app() -> ExitCode {
             };
         }
 
-        match fs_action::mv(&places::base_legacy(), &places::base()) {
+        match std::fs::rename(&places::base_legacy(), &places::base()) {
             Ok(_) => (),
             Err(e) => {
                 fatal!(
                     "Failed to move directory ('{}') to new location: '{}'",
-                    places::base_legacy().to_string(),
-                    places::base().to_string()
+                    places::base_legacy().display().to_string(),
+                    places::base().display().to_string()
                 );
                 println!("{e:#?}");
 

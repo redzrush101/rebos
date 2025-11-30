@@ -3,12 +3,12 @@ use crate::library;
 use piglog::prelude::*;
 
 pub fn run(hook_name: &str) -> Result<(), io::Error> {
-    let hook_path = crate::places::base_user().add_str("hooks").add_str(hook_name);
+    let hook_path = crate::places::base_user().join("hooks").join(hook_name);
 
     if hook_path.exists() {
         crate::info!("Running hook: {}", hook_name);
 
-        match library::run_command(&hook_path.to_string()) {
+        match library::run_command(&hook_path.display().to_string()) {
             true => crate::info!("Successfully ran hook: {}", hook_name),
             false => {
                 crate::error!("Failed to run hook: {}", hook_name);

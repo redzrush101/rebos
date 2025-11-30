@@ -11,7 +11,7 @@ pub struct GitRepo {
 impl GitRepo {
     pub fn new() -> Self {
         Self {
-            path: places::base().to_string(),
+            path: places::base().display().to_string(),
         }
     }
 
@@ -44,7 +44,7 @@ impl GitRepo {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Base directory not found"));
         }
 
-        let git_dir = places::base().add_str(".git");
+        let git_dir = places::base().join(".git");
         
         if !git_dir.exists() {
             info!("Initializing Git repository...");
@@ -59,8 +59,8 @@ impl GitRepo {
             }
 
             // Create .gitignore
-            let gitignore_path = places::base().add_str(".gitignore");
-            std::fs::write(gitignore_path.to_string(), "lock\n")?;
+            let gitignore_path = places::base().join(".gitignore");
+            std::fs::write(&gitignore_path, "lock\n")?;
             self.run_git_command(&["add", ".gitignore"])?;
             self.run_git_command(&["commit", "-m", "Initial commit"])?;
             

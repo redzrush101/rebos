@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use colored::Colorize;
-use fspp::*;
+use std::path::{Path, PathBuf};
 use piglog::prelude::*;
 use piglog::*;
 use serde::Deserialize;
@@ -13,21 +13,17 @@ use crate::library::*;
 use crate::obj_print_boilerplate::macros::print_entry;
 use crate::{bool_question, places};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct ManagerConfig {
+    #[serde(default = "default_many_args")]
     pub many_args: bool,
+    #[serde(default = "default_arg_sep")]
     pub arg_sep: String,
 }
 
-impl Default for ManagerConfig {
-    fn default() -> Self {
-        Self {
-            many_args: true,
-            arg_sep: String::from(" "),
-        }
-    }
-}
+fn default_many_args() -> bool { true }
+fn default_arg_sep() -> String { String::from(" ") }
 
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
@@ -196,7 +192,12 @@ impl Manager {
     pub fn check_config(&self) -> Result<(), Vec<String>> {
         let mut errors: Vec<String> = Vec::new();
 
-        let valid_hook_name = fspp::filename_safe_string(&self.hook_name);
+        let valid_hook_name = self.hook_name.chars()
+            .map(|c| match c {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => c,
+                _ => '_',
+            })
+            .collect::<String>();
 
         if self.hook_name != valid_hook_name {
             errors.push(format!(
@@ -214,15 +215,15 @@ impl Manager {
 }
 
 pub fn load_manager_no_config_check(man: &str) -> Result<Manager, io::Error> {
-    let path = places::base_user().add_str(&format!("managers/{man}.toml"));
+    let path = places::base_user().join(format!("managers/{man}.toml"));
 
-    let man_string = match file::read(&path) {
+    let man_string = match std::fs::read_to_string(&path) {
         Ok(o) => o,
         Err(e) => {
             piglog::fatal!("Failed to read manager file! ({man})");
             piglog::note!(
                 "If this error shows up, it is possible the file is missing. ({})",
-                path.to_string()
+                path.display()
             );
 
             return Err(e);
@@ -273,11 +274,18 @@ pub fn load_manager(man: &str) -> Result<Manager, io::Error> {
 }
 
 pub fn get_managers() -> Result<Vec<String>, io::Error> {
-    let path = places::base_user().add_str("managers");
+    let path = places::base_user().join("managers");
 
-    let man_list: Vec<String> = directory::list_items(&path)?
-        .into_iter()
-        .map(|x| x.basename().replace(".toml", ""))
+    let man_list: Vec<String> = std::fs::read_dir(&path)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().ok().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter_map(|entry| {
+            entry.file_name()
+                .to_str()
+                .map(|s| s.to_string())
+                .filter(|name| name.ends_with(".toml"))
+                .map(|name| name.replace(".toml", ""))
+        })
         .collect();
 
     Ok(man_list)

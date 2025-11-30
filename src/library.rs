@@ -3,9 +3,9 @@
 use colored::Colorize;
 use std::collections::HashMap;
 use piglog::prelude::*;
+use piglog::*;
 use std::io;
 use std::process::Command;
-use users::get_current_username;
 
 
 use crate::generation::Generation;
@@ -62,12 +62,13 @@ pub fn is_root_user() -> bool {
 }
 
 pub fn username() -> String {
-    let username: String = match get_current_username() {
-        Some(uname) => uname.to_str().unwrap().to_string(),
-        None => panic!("Unable to get username!"),
-    };
-
-    username
+    match std::env::var("USER") {
+        Ok(username) => username,
+        Err(_) => match std::env::var("USERNAME") {
+            Ok(username) => username,
+            Err(_) => "user".to_string(), // fallback
+        }
+    }
 }
 
 pub fn remove_array_duplicates<T: Clone + PartialEq>(dup_vec: &[T]) -> Vec<T> {
@@ -178,4 +179,20 @@ pub fn history(array_1: &[String], array_2: &[String]) -> Vec<History> {
     }
 
     history_vec
+}
+
+pub fn hostname() -> Result<String, io::Error> {
+    return Ok(match hostname::get() {
+        Ok(o) => match o.into_string() {
+            Ok(o) => o,
+            Err(_e) => {
+                error!("Failed to parse hostname OsString into String type!");
+                return Err(custom_error("Failed to parse OsString into String!"));
+            },
+        },
+        Err(e) => {
+            error!("Failed to get system hostname!");
+            return Err(e);
+        },
+    });
 }

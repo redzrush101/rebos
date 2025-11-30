@@ -26,10 +26,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
-    /// Force Rebos to unlock (this could break your system if done without reason)
-    ForceUnlock,
-    /// Is Rebos unlocked? (Exit Status: (0 = Yes, 1 = No))
-    IsUnlocked,
+    
     /// Manager commands
     Managers {
         #[command(subcommand)]

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use fspp::*;
+use std::path::PathBuf;
 use piglog::prelude::*;
 use piglog::*;
 use std::io;
@@ -9,7 +9,7 @@ use crate::config;
 use crate::generation;
 
 use crate::places;
-use crate::system;
+
 
 // Constants
 const DEFAULT_USER_GEN: &str =
@@ -114,7 +114,7 @@ pub enum Config {
 
 // Create the user configuration.
 pub fn init_user_config() -> Result<(), io::Error> {
-    let system_hostname = match system::hostname() {
+    let system_hostname = match crate::library::hostname() {
         Ok(o) => o,
         Err(e) => return Err(e),
     };
@@ -122,19 +122,19 @@ pub fn init_user_config() -> Result<(), io::Error> {
     let directories = vec![
         places::base_user(),
         places::base_user()
-            .add_str("machines")
-            .add_str(&system_hostname),
-        places::base_user().add_str("imports"),
-        places::base_user().add_str("hooks"),
-        places::base_user().add_str("managers"),
+            .join("machines")
+            .join(&system_hostname),
+        places::base_user().join("imports"),
+        places::base_user().join("hooks"),
+        places::base_user().join("managers"),
     ];
 
     for i in directories.iter() {
-        if i.exists() == false {
-            match directory::create(i) {
-                Ok(_o) => info!("Created directory: {}", i.to_string()),
+        if !i.exists() {
+            match std::fs::create_dir_all(i) {
+                Ok(_o) => info!("Created directory: {}", i.display()),
                 Err(e) => {
-                    error!("Failed to create directory: {}", i.to_string());
+                    error!("Failed to create directory: {}", i.display());
                     return Err(e);
                 }
             };
@@ -149,30 +149,30 @@ pub fn init_user_config() -> Result<(), io::Error> {
         (
             DEFAULT_USER_GEN,
             places::base_user()
-                .add_str("machines")
-                .add_str(&system_hostname)
-                .add_str("gen.toml"),
+                .join("machines")
+                .join(&system_hostname)
+                .join("gen.toml"),
         ),
         (
             DEFAULT_PACKAGE_MANAGER_CONFIG,
-            places::base_user().add_str("managers/system.toml"),
+            places::base_user().join("managers/system.toml"),
         ),
         (
             DEFAULT_FLATPAK_MANAGER_CONFIG,
-            places::base_user().add_str("managers/flatpak.toml"),
+            places::base_user().join("managers/flatpak.toml"),
         ),
         (
             DEFAULT_CARGO_MANAGER_CONFIG,
-            places::base_user().add_str("managers/cargo.toml"),
+            places::base_user().join("managers/cargo.toml"),
         ),
     ];
 
     for i in files.iter() {
-        if i.1.exists() == false {
-            match file::write(i.0, &i.1) {
-                Ok(_o) => info!("Created file: {}", i.1.to_string()),
+        if !i.1.exists() {
+            match std::fs::write(&i.1, i.0) {
+                Ok(_o) => info!("Created file: {}", i.1.display()),
                 Err(e) => {
-                    error!("Failed to create file: {}", i.1.to_string());
+                    error!("Failed to create file: {}", i.1.display());
                     return Err(e);
                 }
             };
@@ -183,10 +183,10 @@ pub fn init_user_config() -> Result<(), io::Error> {
 }
 
 // Return path for a config file.
-pub fn config_for(config: Config, side: ConfigSide) -> Result<Path, std::io::Error> {
+pub fn config_for(config: Config, side: ConfigSide) -> Result<PathBuf, std::io::Error> {
     match config {
         Config::Generation => match side {
-            ConfigSide::User => Ok(places::base_user().add_str("gen.toml")),
+            ConfigSide::User => Ok(places::base_user().join("gen.toml")),
             ConfigSide::System => match generation::current_gen() {
                 Ok(o) => Ok(o),
                 Err(e) => {
@@ -286,7 +286,7 @@ pub fn check_config(
         ml
     };
 
-    let hostname = system::hostname()?;
+    let hostname = crate::library::hostname()?;
 
     // Check: Manager configuration.
     for man in managers.iter() {
@@ -306,11 +306,10 @@ pub fn check_config(
     }
 
     // Check: Missing machine config.
-    if places::base_user()
-        .add_str(&format!("machines/{}", hostname))
-        .add_str("gen.toml")
+    if !places::base_user()
+        .join(format!("machines/{}", hostname))
+        .join("gen.toml")
         .exists()
-        == false
     {
         errors.push(ConfigError::MissingMachine);
     }
@@ -330,8 +329,11 @@ pub fn check_config(
             }
         }
     }
-    for h in directory::list_items(&places::base_user().add_str("hooks"))? {
-        let hook_name = h.basename();
+    for h in std::fs::read_dir(&places::base_user().join("hooks"))? {
+        let hook_name = h?.file_name()
+            .to_str()
+            .unwrap_or("invalid")
+            .to_string();
 
         if used_hooks.contains(&hook_name) == false {
             warnings.push(ConfigWarning::UnusedHook(hook_name));
